@@ -1,0 +1,137 @@
+---
+title: "ORBIS"
+output: html_notebook
+---
+
+# Carga de paquetes necesarios
+```{r}
+library(here)
+library(readxl)
+library(tidyverse)
+library(lubridate)
+```
+
+# Carga y limpieza de los conjuntos de datos
+## Activos
+```{r}
+activo <- read_xlsx(here("./data/raw/Assets.xlsx"))
+
+activo[activo == "n.d."] <- NA
+
+activo <- activo %>%
+  rename(Equipo = `Nombre empresaAlfabeto latino`,
+         `ID Equipo` = `Número de identificación BvD`,
+         row = `...1`) 
+
+cols_to_pivot <- setdiff(names(activo), c("Equipo", "ID Equipo","row", "Standardized country"))
+
+activo <- activo %>%
+  pivot_longer(cols = all_of(cols_to_pivot), names_to = "columna", values_to = "Valor") %>%
+  mutate(
+    Cuenta = gsub("\\s+EUR\\s+\\d+", "", columna),
+    Año = as.numeric(gsub(".*\\b(\\d{4})\\b.*", "\\1", columna)),
+    Valor = as.numeric(Valor)/1e6
+  )  %>%
+  select(-c(row,columna)) %>%
+  pivot_wider(names_from = "Cuenta", values_from = "Valor") %>%
+  select(`ID Equipo`,
+         Equipo,
+         Año,
+         `Inmovilizado inmaterial`,
+         `Inmovilizado material`,
+         `Activos fijos`,
+         `Activo circulante`,
+         `Activos totales`)  %>%
+  filter(Año > 2014, Año < 2024)
+```
+
+## Pasivos
+```{r}
+pasivo <- read_xlsx(here("./data/raw/Liabilities.xlsx"))
+
+pasivo[pasivo == "n.d."] <- NA
+
+pasivo <- pasivo %>%
+  rename(Equipo = `Nombre empresaAlfabeto latino`,
+         `ID Equipo` = `Número de identificación BvD`,
+         row = `...1`) 
+
+cols_to_pivot <- setdiff(names(pasivo), c("Equipo", "ID Equipo","row", "Standardized country"))
+
+pasivo <- pasivo %>%
+  pivot_longer(cols = all_of(cols_to_pivot), names_to = "columna", values_to = "Valor") %>%
+  mutate(
+    Cuenta = gsub("\\s+EUR\\s+\\d+", "", columna),
+    Año = as.numeric(gsub(".*\\b(\\d{4})\\b.*", "\\1", columna)),
+    Valor = as.numeric(Valor)/1e6
+  )  %>%
+  select(-c(Equipo, row,columna)) %>%
+  pivot_wider(names_from = "Cuenta", values_from = "Valor") %>%
+  select(`ID Equipo`,
+         Año,
+        # Pasivos
+        `Fondos de los accionistas`, 
+        `Pasivos no corrientes`,
+        `Deudas a corto plazo`,
+        `Total pasivo`) %>%
+  filter(Año > 2014, Año < 2024)
+```
+
+## PyG
+```{r}
+PyG <- read_xlsx(here("./data/raw/PyG.xlsx"))
+
+
+PyG[PyG == "n.d."] <- NA
+
+PyG <- PyG %>%
+  rename(Equipo = `Nombre empresaAlfabeto latino`,
+         `ID Equipo` = `Número de identificación BvD`,
+         row = `...1`) 
+
+cols_to_pivot <- setdiff(names(PyG), c("Equipo", "ID Equipo","row", "Standardized country"))
+
+PyG <- PyG %>%
+  pivot_longer(cols = all_of(cols_to_pivot), names_to = "columna", values_to = "Valor") %>%
+  mutate(
+    Cuenta = gsub("\\s+EUR\\s+\\d+", "", columna),
+    Año = as.numeric(gsub(".*\\b(\\d{4})\\b.*", "\\1", columna)),
+    Valor = as.numeric(Valor)/1e6
+  )  %>%
+  select(-c(Equipo, row,columna)) %>%
+  pivot_wider(names_from = "Cuenta", values_from = "Valor") %>%
+  select(`ID Equipo`,
+         Año,
+        # PyG
+        `Ingresos explotación (Cifra ventas)`, 
+        `P/G operacionales [=EBIT]`) %>%
+  filter(Año > 2014, Año < 2024)
+```
+
+## Join de todo
+```{r}
+ORBIS <- activo %>%
+  inner_join(pasivo,
+            by = c("ID Equipo" = "ID Equipo", 
+                           "Año" = "Año"),
+            suffix = c(" Activo", " Pasivo")) %>%
+  inner_join(PyG,
+            by = c("ID Equipo" = "ID Equipo", 
+                           "Año" = "Año")) %>%
+  rename(inmaterial = `Inmovilizado inmaterial`,
+         material = `Inmovilizado material`,
+         activos_fijos = `Activos fijos`,
+         activo_circulante = `Activo circulante`,
+         activos_totales = `Activos totales`,
+         deuda_lp = `Pasivos no corrientes`,
+         deuda_cp = `Deudas a corto plazo`,
+         patrimonio_neto = `Fondos de los accionistas`,
+         pasivo_y_patrimonio = `Total pasivo`,
+         ingresos_explotacion = `Ingresos explotación (Cifra ventas)`,
+         ebit = `P/G operacionales [=EBIT]`) %>%
+  mutate(activos_netos = activos_totales - deuda_lp - deuda_cp) %>%
+  filter(complete.cases(.))
+
+export(ORBIS, file = here("./data/processed/ORBIS.xlsx"))
+```
+

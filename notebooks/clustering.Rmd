@@ -1,0 +1,440 @@
+---
+title: "Clustering"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Carga de paquetes necesarios
+```{r, message=F, warning=F}
+library(readxl)
+library(tidyverse)
+library(viridis)
+library(lubridate)
+library(corrplot)
+library(kohonen)
+library(rvest)
+```
+
+# Carga de conjuntos de datos
+```{r}
+NOT_ORBIS <- read_xlsx('./datos/finanzas_externas.xlsx') %>%
+  select(-exchange_rate) %>%
+  filter(complete.cases(.))
+load('./datos/ORBIS.RData')
+load('./datos/Transfermarkt.RData')
+
+Finanzas <- rbind(ORBIS, NOT_ORBIS)
+
+df <- inner_join(Finanzas, Transfermarkt, by = c("Equipo","Año")) %>%
+  filter(complete.cases(.)) %>%
+  filter(capacidad > asistencia) %>%
+  filter(Año != 2020) %>%
+  mutate(ast_pct = asistencia/capacidad,
+         markham = (patrimonio_neto + ingresos_explotacion) * ((ebit + ingresos_explotacion)/ingresos_explotacion) * ast_pct / 05,
+         antiguedad_estadio = 2024 - construccion_estadio,
+         fm = activo_circulante - deuda_cp,
+         id = paste0(`ID Equipo`,'-',Año, sep = '')) %>%
+  select(-c(construccion_estadio)) %>%
+  filter_if(is.numeric, all_vars(abs(.) < Inf))
+```
+
+# Análisis exploratorio
+## Valor de Markham
+```{r, message = F}
+df %>% 
+  mutate(markham = markham) %>%
+  select(País, Año, markham) %>%
+  group_by(País, Año) %>%
+  summarise(markham = mean(markham)) %>%
+  arrange(desc(markham))
+
+df %>% 
+  mutate(markham = markham) %>%
+  select(País, Año, markham) %>%
+  group_by(País, Año) %>%
+  summarise(markham = mean(markham)) %>%
+  ggplot() +
+  geom_path(aes(x = Año, y = markham, color = País)) +
+  scale_color_viridis(discrete = T) +
+  labs(title = "Valor medio de equipo por países",
+       subtitle = "Método de Markham",
+       x = NULL,
+       y = "Valor (millones de euros)",
+       color = NULL) +
+  theme_bw()
+```
+
+## MV vs. inmovilizado inmaterial
+```{r}
+ggplot(df) +
+  geom_density(aes(vm_plantilla - inmaterial)) +
+  theme_bw()
+```
+
+# Reducción de la dimensionalidad
+## Funciones de usuario
+```{r}
+# This will perform a PCA, with a possibility of rotation.
+Extract_Factors <- function(data, rank, rotation = F) {
+  
+  PCA_Full <- prcomp(data, 
+                scale. = T,
+                rank. = rank) 
+  
+  print(summary(PCA_Full))
+  scores <- as.array(scale(PCA_Full$x))
+  
+  if (rotation) {
+    rotation <- varimax(PCA_Full$rotation)
+    rot.scores <- as.array(scores %*% rotation$rotmat)
+    
+    factors <- rot.scores
+    corrplot(cor(data,rot.scores))
+    
+  } else {
+    factors <- scores
+    corrplot(t(cor(data,scores)))
+  }
+  
+  return(factors)
+}
+
+# This will tell us the variables that are mostly correlated to each new factor
+
+studyFactors <- function(pca_data, factors) {
+  
+  correlations <- as.data.frame(cor(pca_data,factors))
+  
+  correlations$var <- row.names(correlations)
+  
+  for (i in 1:(ncol(correlations)-1)) {
+    
+    table <- correlations %>%
+      mutate(color = correlations[[i]]>=0,
+            abs = abs(correlations[[i]])) %>%
+      top_n(n=10,wt=abs) %>%
+      mutate(tag = 1:nrow(.)) %>% 
+      ggplot() +
+      geom_col(aes(x=reorder(var,abs),y=abs,fill=color)) +
+      geom_hline(yintercept = 0.7, linetype = "dashed") +
+      scale_fill_manual(name = "Correlation sign",
+                        labels = c("Negative","Positive"),
+                        values = c("Red","Blue")) +
+      scale_y_continuous(limits = c(0,1)) +
+      labs(x = "Original Variable",
+           y = "Absolute Value of correlation") +
+      coord_flip() +
+      theme_bw()
+     
+    print(table)
+      
+  }
+}
+
+PCA_Analysis <- function(data, rank, rotation, cor = 0.7) {
+  
+  data <- data[,apply(data, 2, var, na.rm=TRUE) != 0]
+  
+  factors <- Extract_Factors(data, rank, rotation)
+  #studyFactors(data, factors)
+  
+  return(factors)
+}
+```
+
+## PCA con rotación
+```{r}
+df_PCA_rot <- df %>%
+  select_if(is.numeric) %>%
+  select(-c(Año, `Transfermarkt ID`)) %>%
+  PCA_Analysis(rank = 10, rotation = T)
+```
+
+# Clustering
+## Definición de matriz
+```{r}
+# Definimos nombres de los factores
+colnames(df_PCA_rot) <- c("Rotación y valor de plantilla (Inv)",
+                          "Fondos de maniobra y PN",
+                          "Nivel competitivo (Inv)",
+                          "Dominancia deportiva (Inv)",
+                          "Neto transferencias",
+                          "Antigüedad del estadio (Inv)",
+                          "Ocupación del estadio (Inv)",
+                          "Masa patrimonial",
+                          "Masa de espectadores (Inv)",
+                          "EBIT (Inv)")
+
+# Construimos un id nuevo
+rownames(df_PCA_rot) <- df$id
+
+df_PCA_rot <- as.data.frame(df_PCA_rot) %>%
+  mutate_at(vars(ends_with("(Inv)")), list(~ -.)) %>%
+  rename_at(vars(ends_with("(Inv)")), ~ gsub("\\(Inv\\)$", "", .))
+
+df <- df %>%
+  filter(id %in% rownames(df_PCA_rot))
+
+trainingMatrix <- df_PCA_rot %>%
+  as.matrix()
+```
+
+## Training
+```{r}
+set.seed(2201)
+som_grid <- somgrid(xdim = 15, ydim = 15, topo="hexagonal")
+
+som_model <- som(trainingMatrix, 
+    grid = som_grid, 
+    rlen = 10000, 
+    alpha = 0.01, 
+    keep.data = TRUE)
+
+plot(som_model, type="changes")
+```
+
+```{r}
+plot(som_model, type = "mapping")
+plot(som_model, type = "quality")
+```
+
+```{r}
+coolBlueHotRed <- function(n, alpha = 1) { 
+  rainbow(n, end=4/6, alpha=alpha)[n:1] 
+} 
+
+for (i in 1:ncol(trainingMatrix)) {
+  plot(som_model, 
+       type = "property", 
+       property = getCodes(som_model)[,i], 
+       main = colnames(getCodes(som_model))[i],
+       palette.name = coolBlueHotRed)
+}
+```
+
+```{r}
+mydata <- som_model$codes[[1]] 
+wss <- (nrow(mydata)-1)*sum(apply(mydata,2,var)) 
+for (i in 2:10) {
+  wss[i] <- sum(kmeans(mydata, centers=i)$withinss)
+}
+plot(wss)
+```
+
+```{r}
+tree <- hclust(object.distances(som_model , "codes"),
+               method="ward.D")
+
+data <- as.data.frame(df_PCA_rot)
+data$id <- rownames(data)
+data$neuron <- som_model$unit.classif
+
+K <- 6
+som_cluster <- cutree(tree, k=K)
+
+plot(som_model,  
+     type = "mapping",
+     bgcol = viridis(K)[som_cluster], 
+     main = "Clusters")
+```
+
+```{r}
+clusters <- as.data.frame(cbind(neuron = 1:400, 
+                                cluster = som_cluster))
+
+clusters <- inner_join(data,clusters)
+
+df$cluster[clusters$id == df$id] <- clusters$cluster[clusters$id == df$id]
+df$cluster <- as.factor(df$cluster)
+
+print(table(clusters$cluster))
+
+"#440154FF"
+"#414487FF" 
+"#2A788EFF" 
+"#22A884FF" 
+"#7AD151FF" 
+"#FDE725FF"
+```
+
+# Análisis de clusters
+```{r}
+d <- clusters %>%
+  group_by(cluster) %>%
+  summarise_if(is.numeric,mean) %>%
+  mutate(cluster = as.factor(cluster))
+```
+
+## Factor 1: Rotación de plantilla
+```{r, warning = F}
+ggplot(d, aes(x=cluster,y=d[[2]],fill=cluster)) +
+  geom_bar(stat='identity',position='dodge') +
+  scale_fill_viridis(discrete = T) +
+  labs(x = NULL,
+       y = NULL,
+       title = names(d)[[2]]) +
+  theme_bw()
+```
+
+## Factor 2: Patrimonio neto
+```{r, warning=F}
+ggplot(d, aes(x=cluster,y=d[[3]],fill=cluster)) +
+  geom_bar(stat='identity',position='dodge') +
+  scale_fill_viridis(discrete = T) +
+  labs(x = NULL,
+       y = NULL,
+       title = names(d)[[3]]) +
+  theme_bw()
+```
+
+## Factor 3: Nivel de competición
+```{r, warning=F}
+ggplot(d, aes(x=cluster,y=d[[4]],fill=cluster)) +
+  geom_bar(stat='identity',position='dodge') +
+  scale_fill_viridis(discrete = T) +
+  labs(x = NULL,
+       y = NULL,
+       title = names(d)[[4]]) +
+  theme_bw()
+```
+
+```{r}
+ggplot(df) +
+  geom_point(aes(x = posicion_roll,
+                 y = Posicion,
+                 color = cluster),
+             alpha = 0.8) +
+  scale_color_viridis(discrete = T) +
+  geom_vline(xintercept = mean(df$posicion_roll)) +
+  geom_hline(yintercept = mean(df$Posicion)) +
+  theme_bw()
+```
+
+## Factor 4: Rendimiento
+```{r, warning=F}
+ggplot(d, aes(x=cluster,y=d[[5]],fill=cluster)) +
+  geom_bar(stat='identity',position='dodge') +
+  scale_fill_viridis(discrete = T) +
+  labs(x = NULL,
+       y = NULL,
+       title = names(d)[[5]]) +
+  theme_bw()
+```
+
+```{r}
+ggplot(df) +
+  geom_point(aes(x = win_pct_roll,
+                 y = win_pct,
+                 color = cluster),
+             alpha = 0.8) +
+  scale_color_viridis(discrete = T) +
+  geom_vline(xintercept = mean(df$win_pct_roll)) +
+  geom_hline(yintercept = mean(df$win_pct)) +
+  theme_bw()
+```
+
+## Factor 5: Saldo transferencias
+```{r, warning=F}
+ggplot(d, aes(x=cluster,y=d[[6]],fill=cluster)) +
+  geom_bar(stat='identity',position='dodge') +
+  scale_fill_viridis(discrete = T) +
+  labs(x = NULL,
+       y = NULL,
+       title = names(d)[[6]]) +
+  theme_bw()
+```
+
+```{r}
+ggplot(df) +
+  geom_point(aes(x = neto_transferencias_roll,
+                 y = neto_transferencias,
+                 color = cluster),
+             alpha = 0.3) +
+  scale_color_viridis(discrete = T) +
+  geom_vline(xintercept = mean(df$neto_transferencias_roll)) +
+  geom_hline(yintercept = mean(df$neto_transferencias)) +
+  theme_bw()
+```
+
+## Factor 6: Antigüedad estadio
+```{r, warning=F}
+ggplot(d, aes(x=cluster,y=d[[7]],fill=cluster)) +
+  geom_bar(stat='identity',position='dodge') +
+  scale_fill_viridis(discrete = T) +
+  labs(x = NULL,
+       y = NULL,
+       title = names(d)[[7]]) +
+  theme_bw()
+```
+
+```{r}
+ggplot(df) +
+  geom_point(aes(x = antiguedad_estadio,
+                 y = material,
+                 color = cluster),
+             alpha = 0.3) +
+  scale_color_viridis(discrete = T) +
+  geom_vline(xintercept = mean(df$antiguedad_estadio)) +
+  geom_hline(yintercept = mean(df$material)) +
+  theme_bw()
+```
+
+## Factor 7: Masa de espectadores
+```{r, warning=F}
+ggplot(d, aes(x=cluster,y=d[[8]],fill=cluster)) +
+  geom_bar(stat='identity',position='dodge') +
+  scale_fill_viridis(discrete = T) +
+  labs(x = NULL,
+       y = NULL,
+       title = names(d)[[8]]) +
+  theme_bw()
+```
+
+```{r}
+ggplot(df) +
+  geom_point(aes(x = capacidad,
+                 y = asistencia,
+                 color = cluster),
+             alpha = 0.5) +
+  scale_color_viridis(discrete = T) +
+  geom_vline(xintercept = mean(df$capacidad), linetype = "dashed") +
+  geom_hline(yintercept = mean(df$asistencia)) +
+  geom_abline(slope = 1, intercept = 0) +
+  theme_bw()
+```
+
+
+## Factor 8: EBIT
+```{r, warning=F}
+ggplot(d, aes(x=cluster,y=d[[9]],fill=cluster)) +
+  geom_bar(stat='identity',position='dodge') +
+  scale_fill_viridis(discrete = T) +
+  labs(x = NULL,
+       y = NULL,
+       title = names(d)[[9]]) +
+  theme_bw()
+```
+
+## Factor 9: Ocupación del estadio
+```{r, warning=F}
+ggplot(d, aes(x=cluster,y=d[[10]],fill=cluster)) +
+  geom_bar(stat='identity',position='dodge') +
+  scale_fill_viridis(discrete = T) +
+  labs(x = NULL,
+       y = NULL,
+       title = names(d)[[10]]) +
+  theme_bw()
+```
+
+## Activos fijos
+```{r, warning=F}
+ggplot(d, aes(x=cluster,y=d[[11]],fill=cluster)) +
+  geom_bar(stat='identity',position='dodge') +
+  scale_fill_viridis(discrete = T) +
+  labs(x = NULL,
+       y = NULL,
+       title = names(d)[[11]]) +
+  theme_bw()
+```
+

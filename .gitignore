@@ -2,3 +2,10 @@
 .Rhistory
 .RData
 .Ruserdata
+
+# Ignorar archivos Word
+*.docx
+*.doc
+
+# Ignorar archivos Rproj
+*.Rproj

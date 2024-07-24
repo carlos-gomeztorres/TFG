@@ -7,5 +7,12 @@
 *.docx
 *.doc
 
+# Ignorar archivos temporales de Word
+~$*.docx
+~$*.doc
+
+# Ignorar archivos temporales de Excel
+~$*.xlsx
+
 # Ignorar archivos Rproj
 *.Rproj

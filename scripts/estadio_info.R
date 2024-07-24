@@ -1,6 +1,9 @@
 library(pbapply)
-library(readxl)
 library(here)
+library(rio)
+library(parallel)
+library(rvest)
+library(dplyr)
 EST_PATH <- here('./data/processed/Estadio.xlsx')
 
 estadio_info <- function(row) {
@@ -133,14 +136,18 @@ if (file.exists(EST_PATH)) {
   )
 }
 
-Equipos <- read_xlsx(here('./data/aux/Equipos.xlsx'))
+Equipos <- import(here('./data/aux/Equipos.xlsx'))
 
 df <- Equipos %>%
   anti_join(Estadio, by = c("Transfermarkt Handle" = "Handle"))
 
-df_list <- pblapply(1:nrow(df), function(i) estadio_info(df[i, ]))
-newrows <- do.call(rbind, df_list) %>% filter(!is.na(Handle))
+num_cores <- detectCores() - 1
 
+df_list <- mclapply(1:nrow(df), 
+                    function(i) estadio_info(df[i, ]), 
+                    mc.cores = num_cores)
+
+newrows <- do.call(rbind, df_list) %>% filter(!is.na(Handle))
 Estadio <- rbind(Estadio, newrows) %>% 
   filter(!is.na(Handle))
 
@@ -162,4 +169,4 @@ estadios_pre_2009 <- Estadio %>%
 Estadio <- rbind(estadios_pre_2009, estadios_post_2009) %>%
   mutate(Capacidad = as.numeric(gsub("\\.", "",Capacidad)))
 
-export(Estadio, EST_PATH,row.names = F)
+export(Estadio, EST_PATH,rowNames = F)

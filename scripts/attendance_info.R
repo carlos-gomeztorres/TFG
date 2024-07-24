@@ -1,6 +1,9 @@
 library(pbapply)
-library(readxl)
 library(here)
+library(rio)
+library(parallel)
+library(rvest)
+library(dplyr)
 ATT_PATH <- here('./data/processed/Attendance.xlsx')
 
 attendance_info <- function(row) {
@@ -19,6 +22,7 @@ attendance_info <- function(row) {
     id <- trimws(row['Transfermarkt ID'])
     handle <- trimws(row['Transfermarkt Handle'])
     
+    #https://www.transfermarkt.com/real-madrid/besucherzahlenentwicklung/verein/418
     url <- paste0('https://www.transfermarkt.com/', 
                   handle,
                   '/besucherzahlenentwicklung/verein/',
@@ -32,7 +36,6 @@ attendance_info <- function(row) {
       html_elements('tr td:last-child') %>%
       html_text2() %>%
       gsub(',','',.) %>%
-      gsub('.','',.) %>% 
       as.numeric()
     
     season <- estadio %>%
@@ -65,11 +68,18 @@ if (file.exists(ATT_PATH)) {
   )
 }
 
-Equipos <- read_xlsx(here('./data/aux/Equipos.xlsx'))
+Equipos <- import(here('./data/aux/Equipos.xlsx'))
+
 df <- Equipos %>%
   anti_join(Attendance, by = c("Transfermarkt Handle" = "Handle"))
 
-df_list <- pblapply(1:nrow(df), function(i) attendance_info(df[i, ]))
+num_cores <- detectCores() - 1
+
+df_list <- mclapply(1:nrow(df), 
+                    function(i) attendance_info(df[i, ]), 
+                    mc.cores = num_cores)
+
 newrows <- do.call(rbind, df_list) %>% filter(!is.na(Handle))
+
 Attendance <- rbind(Attendance, newrows)
-export(Attendance, ATT_PATH, row.names = F)
+export(Attendance, ATT_PATH, rowNames = F)

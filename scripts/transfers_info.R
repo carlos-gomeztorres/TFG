@@ -1,6 +1,10 @@
 library(pbapply)
 library(here)
 library(rio)
+library(parallel)
+library(rvest)
+library(dplyr)
+
 TRANSF_PATH <- here('./data/processed/Transfers.xlsx')
 
 transfers_info <- function(row) {
@@ -84,7 +88,7 @@ transfers_info <- function(row) {
   
   error = function(e) {
     # Handle the error
-    message("Error en estadio_info: ", e$message)
+    message("Error en transfers_info: ", e$message)
     message("Row: ", row)
     return(NULL)
   })
@@ -114,7 +118,13 @@ temporadas_años <- data.frame(Año = 2009:2022,
 df <- merge(Equipos, temporadas_años) %>%
   anti_join(Transfers, by = c("Transfermarkt Handle" = "Handle","Año" = "Año"))
 
-df_list <- pblapply(1:nrow(df), function(i) transfers_info(df[i, ]))
+
+num_cores <- detectCores() - 1
+
+df_list <- mclapply(1:nrow(df), 
+                    function(i) transfers_info(df[i, ]), 
+                    mc.cores = num_cores)
+
 newrows <- do.call(rbind, df_list) %>% filter(!is.na(Handle))
 Transfers <- rbind(Transfers, newrows)
-export(Transfers, TRANSF_PATH, row.names = F)
+export(Transfers, TRANSF_PATH, rowNames = F)

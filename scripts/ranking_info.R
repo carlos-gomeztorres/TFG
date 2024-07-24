@@ -1,6 +1,10 @@
 library(pbapply)
-library(readxl)
 library(here)
+library(rio)
+library(parallel)
+library(rvest)
+library(dplyr)
+library(stringr)
 RNK_PATH <- here('./data/processed/Ranking.xlsx')
 
 ranking_info <- function(row) {
@@ -65,10 +69,13 @@ ranking_info <- function(row) {
   return(ranking)
 }
 
-competencias <- read_xlsx(here('./data/aux/Competencias.xlsx'))
+competencias <- import(here('./data/aux/Competencias.xlsx'))
 
-df_list <- pblapply(1:nrow(competencias), function(i) ranking_info(competencias[i,]))
-newrows <- do.call(rbind, df_list)
-Ranking <- rbind(Ranking, newrows)
+num_cores <- detectCores() - 1
 
-export(Ranking, RNK_PATH,row.names = F)
+df_list <- mclapply(1:nrow(competencias), 
+                    function(i) ranking_info(competencias[i,]), 
+                    mc.cores = num_cores)
+
+Ranking <- do.call(rbind, df_list)
+export(Ranking, RNK_PATH,rowNames = F)

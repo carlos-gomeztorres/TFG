@@ -34,15 +34,11 @@ activo <- activo %>%
   )  %>%
   select(-c(row,columna)) %>%
   pivot_wider(names_from = "Cuenta", values_from = "Valor") %>%
-  select(`ID Equipo`,
-         Equipo,
-         Año,
-         `Inmovilizado inmaterial`,
-         `Inmovilizado material`,
-         `Activos fijos`,
-         `Activo circulante`,
-         `Activos totales`)  %>%
-  filter(Año > 2014, Año < 2024)
+  select(BvD_ID = `ID Equipo`,
+         AÑO = Año,
+         MATERIAL = `Inmovilizado inmaterial`,
+         INTANGIBLE = `Inmovilizado material`)  %>%
+  filter(AÑO > 2014, AÑO < 2024)
 ```
 
 ## Pasivos
@@ -67,20 +63,19 @@ pasivo <- pasivo %>%
   )  %>%
   select(-c(Equipo, row,columna)) %>%
   pivot_wider(names_from = "Cuenta", values_from = "Valor") %>%
-  select(`ID Equipo`,
-         Año,
+  select(BvD_ID =`ID Equipo`,
+         AÑO=Año,
         # Pasivos
         `Fondos de los accionistas`, 
         `Pasivos no corrientes`,
         `Deudas a corto plazo`,
         `Total pasivo`) %>%
-  filter(Año > 2014, Año < 2024)
+  filter(AÑO > 2014, AÑO < 2024)
 ```
 
 ## PyG
 ```{r}
 PyG <- read_xlsx(here("./data/raw/PyG.xlsx"))
-
 
 PyG[PyG == "n.d."] <- NA
 
@@ -100,38 +95,54 @@ PyG <- PyG %>%
   )  %>%
   select(-c(Equipo, row,columna)) %>%
   pivot_wider(names_from = "Cuenta", values_from = "Valor") %>%
-  select(`ID Equipo`,
-         Año,
+  select(BvD_ID =`ID Equipo`,
+         AÑO = Año,
         # PyG
-        `Ingresos explotación (Cifra ventas)`, 
-        `P/G operacionales [=EBIT]`) %>%
-  filter(Año > 2014, Año < 2024)
+        INGRESOS = `Ingresos explotación (Cifra ventas)`, 
+        EBIT=`P/G operacionales [=EBIT]`) %>%
+  filter(AÑO > 2014, AÑO < 2024)
 ```
 
 ## Join de todo
 ```{r}
-ORBIS <- activo %>%
-  inner_join(pasivo,
-            by = c("ID Equipo" = "ID Equipo", 
-                           "Año" = "Año"),
-            suffix = c(" Activo", " Pasivo")) %>%
+Equipos <- import(here('./data/aux/Equipos.xlsx'))
+
+Finanzas <- activo %>%
   inner_join(PyG,
-            by = c("ID Equipo" = "ID Equipo", 
-                           "Año" = "Año")) %>%
-  rename(inmaterial = `Inmovilizado inmaterial`,
-         material = `Inmovilizado material`,
-         activos_fijos = `Activos fijos`,
-         activo_circulante = `Activo circulante`,
-         activos_totales = `Activos totales`,
-         deuda_lp = `Pasivos no corrientes`,
-         deuda_cp = `Deudas a corto plazo`,
-         patrimonio_neto = `Fondos de los accionistas`,
-         pasivo_y_patrimonio = `Total pasivo`,
-         ingresos_explotacion = `Ingresos explotación (Cifra ventas)`,
-         ebit = `P/G operacionales [=EBIT]`) %>%
-  mutate(activos_netos = activos_totales - deuda_lp - deuda_cp) %>%
+            by = c("BvD_ID", "AÑO")) %>%
+  inner_join(Equipos, by = c("BvD_ID")) %>%
+  select(-c(TRANSFERMARKT_HANDLE,TRANSFERMARKT_ID,BvD_ID)) %>%
   filter(complete.cases(.))
 
-export(ORBIS, file = here("./data/processed/ORBIS.xlsx"))
+NOT_ORBIS <- import(here('./data/raw/other_accounts.xlsx')) %>%
+  select(names(Finanzas))
+
+Finanzas <- rbind(Finanzas,NOT_ORBIS) %>%
+  distinct()
+```
+
+```{r, warning = F}
+Deals <- import(here('./data/raw/Deals.xlsx')) %>%
+  filter(!is.na(`Target BvD ID number`),
+         !`Acquiror BvD ID number` %in% Equipos$BvD_ID) %>%
+  left_join(Equipos, by = c("Target BvD ID number"="BvD_ID")) %>%
+  select(EQUIPO,
+         COMPRADOR = `Acquiror name`,
+         TIPO_DEAL = `Deal type`,
+         VALOR = `Deal value EUR`,
+         PART = `Acquired stake (%)`,
+         FECHA = `Last deal status date`) %>%
+  mutate(VALOR = as.numeric(VALOR)/1e6,
+         PART = as.numeric(PART),
+         AÑO = year(FECHA)) %>%
+  filter(!is.na(EQUIPO),
+         !is.na(VALOR),
+         !is.na(PART),
+         between(AÑO, 2014, 2023))
+```
+
+```{r}
+export(Finanzas, here('./data/processed/Finanzas.xlsx'),rowNames = F)
+export(Deals, here('./data/processed/M&A.xlsx'),rowNames = F)
 ```
 

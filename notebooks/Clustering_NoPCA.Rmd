@@ -1,0 +1,116 @@
+---
+title: "Clustering"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library(rio)
+library(here)
+library(tidyverse)
+library(kohonen)
+library(viridis)
+source(here('./scripts/winsorize.R'))
+```
+
+```{r}
+Transfermarkt <- import(here('./data/processed/Transfermarkt.xlsx'))
+Finanzas <- import(here('./data/processed/Finanzas.xlsx'))
+
+df <- inner_join(Finanzas, Transfermarkt, by = c("EQUIPO","AÑO")) %>%
+  filter(AÑO != 2020) %>%
+  select(EQUIPO,
+         PAIS,
+         AÑO,
+         MATERIAL, 
+         INGRESOS,
+         EBIT,
+         ASISTENCIA,
+         MV,
+         MV5,
+         FICHAJES,
+         CAPACIDAD,
+         OCUPACION,
+         RANKNAC,
+         RANKNAC5,
+         WINPCT,
+         WINPCT5)
+```
+
+```{r}
+trainingMatrix <- df %>%
+  select(-c(AÑO,EQUIPO,PAIS)) %>%
+  mutate(across(where(is.numeric), winsorize, prob = 0.05)) %>%
+  scale() %>%
+  as.matrix()
+
+rownames(trainingMatrix) <- paste(df$EQUIPO,"|",df$AÑO)
+```
+
+```{r}
+xdim = 15
+ydim = 15
+set.seed(2201)
+som_grid <- somgrid(xdim = xdim, ydim = ydim, topo="hexagonal")
+som_model <- som(trainingMatrix, 
+                 grid = som_grid, 
+                 rlen = 10000, 
+                 alpha = 0.01, 
+                 keep.data = TRUE)
+
+plot(som_model, type="changes")
+plot(som_model, type = "mapping")
+```
+
+```{r}
+for (i in 1:ncol(trainingMatrix)) {
+  plot(som_model, 
+       type = "property", 
+       property = getCodes(som_model)[,i], 
+       main = colnames(getCodes(som_model))[i],
+       palette.name = viridis_pal(option = "A",
+                                  direction = -1,
+                                  begin = 0.15,
+                                  end = 1))
+}
+```
+
+```{r}
+tree <- hclust(object.distances(som_model , "codes"),
+               method="ward.D2")
+
+K <- 5
+som_cluster <- cutree(tree, k=K)
+
+plot(som_model, 
+     type = "mapping",
+     bgcol = viridis(K)[som_cluster], 
+     main = "Clusters")
+
+df$neuron <- som_model$unit.classif
+clusters <- data.frame(neuron = 1:(xdim*ydim),cluster = som_cluster) %>% 
+  inner_join(df, by = "neuron")
+
+table(clusters$cluster)
+```
+
+```{r}
+Deals <- import(here('./data/processed/M&A.xlsx')) %>%
+  mutate(VALOR = VALOR*100/PART) %>%
+  filter(!is.na(VALOR), !is.na(PART)) %>%
+  select(EQUIPO, AÑO, VALOR, PART)
+
+ratios <- clusters %>%
+  left_join(Deals, by = c("EQUIPO","AÑO")) %>%
+  mutate(RATIO_INGRESOS = VALOR/INGRESOS) %>%
+  group_by(cluster) %>%
+  summarise(RATIO_CLUSTER = mean(RATIO_INGRESOS, na.rm = T))
+
+clusters %>%
+  inner_join(ratios) %>%
+  mutate(EV = INGRESOS*RATIO_CLUSTER) %>%
+  select(EQUIPO, AÑO, cluster, RATIO_CLUSTER, INGRESOS,EV) %>%
+  filter(AÑO == 2022) %>%
+  arrange(desc(EV))
+```

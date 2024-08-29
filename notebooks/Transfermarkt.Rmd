@@ -1,171 +1,73 @@
 ---
-title: "Transfermarkt"
+title: "Construcción de conjunto de datos"
 author: "Carlos Eduardo Gómez-Torres"
 date: "`r Sys.Date()`"
 output: html_document
 ---
 
-# Loading
+# Carga de paquetes
 ```{r}
-library(rvest)
-library(httr)
-library(stringr)
-library(tidyverse)
 library(rio)
-library(zoo)
-library(pbapply)
 library(here)
-
-lista <- import('./datos/Lista.xlsx')
-competencias <- import('./datos/Competencias.xlsx')
-temporadas_años <- data.frame(Año = 2009:2022,
-                              Temporada = c("09/10","10/11","11/12",
-                                            "12/13","13/14","14/15","15/16",
-                                            "16/17","17/18","18/19","19/20",
-                                            "20/21","21/22","22/23"))
-```
-
-# Ejecución de arañas web
-## Mercado de transferencias
-```{r, warning = F}
-source(here('./market_info.R'))
-if (file.exists('./datos/Market.csv')) {
-  Market <- import('./datos/Market.csv')
-} else {
-  Market <- data.frame(
-    Handle = character(),
-    Año = numeric(),
-    MV = numeric(),
-    Ventas = numeric(),
-    Fichajes = numeric(),
-    Neto = numeric()
-  )
-}
-df <- merge(lista, temporadas_años) %>%
-  anti_join(Market, by = c("Transfermarkt Handle" = "Handle",
-                           "Año" = "Año"))
-
-df_list <- pblapply(1:nrow(df), function(i) market_info(df[i, ]))
-newrows <- do.call(rbind, df_list) %>% filter(!is.na(Handle))
-Market <- rbind(Market, newrows)
-write.csv(Market, './datos/Market.csv', row.names = F)
-```
-
-
-## Información del estadio
-```{r, warning = F}
-source('./estadio_info.R')
-if (file.exists('./datos/Estadio.csv')) {
-  Estadio <- import('./datos/Estadio.csv')
-} else {
-  Estadio <- data.frame(
-    Handle = character(),
-    Construccion = numeric(),
-    Capacidad = numeric(),
-    Fin = numeric()
-  )
-}
-
-df <- lista %>%
-  anti_join(Estadio, by = c("Transfermarkt Handle" = "Handle"))
-
-df_list <- pblapply(1:nrow(df), function(i) estadio_info(df[i, ]))
-newrows <- do.call(rbind, df_list) %>% filter(!is.na(Handle))
-Estadio <- rbind(Estadio, newrows)
-
-Estadio <- Estadio %>% filter(!is.na(Handle))
-
-estadios_post_2009 <- Estadio %>%
-  filter(Construccion >= 2009) %>%
-  group_by(Handle) %>%
-  filter(Capacidad == max(Capacidad)) %>%
-  mutate(Fin = 2024)
-
-estadios_pre_2009 <- Estadio %>%
-  select(-c(Fin)) %>%
-  filter(Construccion < 2009) %>%
-  group_by(Handle) %>%
-  filter(Construccion == max(Construccion), 
-         Capacidad == max(Capacidad)) %>%
-  left_join(estadios_post_2009 %>% select(Handle, Fin = Construccion), by ="Handle") %>%
-  mutate(Fin = ifelse(is.na(Fin), 2024, Fin))
-
-Estadio <- rbind(estadios_pre_2009, estadios_post_2009) %>%
-  mutate(Capacidad = as.numeric(gsub("\\.", "",Capacidad)))
-
-write.csv(Estadio, './datos/Estadio.csv', row.names = F)
-```
-
-## Asistencia estadio
-```{r, warning = F}
-source('./attendance_info.R')
-
-if (file.exists('./datos/Attendance.csv')) {
-  Attendance <- import('./datos/Attendance.csv')
-} else {
-  Attendance <- data.frame(
-    Handle = character(),
-    Temporada = character(),
-    Asistencia = numeric()
-  )
-}
-
-df <- lista %>%
-  anti_join(Attendance, by = c("Transfermarkt Handle" = "Handle"))
-
-df_list <- pblapply(1:nrow(df), function(i) attendance_info(df[i, ]))
-newrows <- do.call(rbind, df_list) %>% filter(!is.na(Handle))
-Attendance <- rbind(Attendance, newrows)
-
-write.csv(Attendance, './datos/Attendance.csv', row.names = F)
-```
-
-## Información de competiciones
-```{r, warning = F}
-source('./ranking_info.R')
-
-df_list <- pblapply(1:nrow(competencias), function(i) ranking_info(competencias[i,]))
-newrows <- do.call(rbind, df_list)
-Ranking <- rbind(Ranking, newrows)
-
-write.csv(Ranking, './datos/Ranking.csv', row.names = F)
-```
-
-# Consolidación
-```{r}
+library(tidyverse)
+library(zoo)
+source(here('./scripts/calculate_rank.R'))
 calculate_moving_average <- function(x) {
   rollapply(x, width = 5, FUN = mean, align = "right", fill = NA)
 }
+```
+
+# Datos deportivos
+```{r}
+Transfers <- import(here('./data/raw/Transfers.xlsx'))
+Ranking <- import(here('./data/raw/Ranking.xlsx'))
+Attendance <- import(here('./data/raw/Attendance.xlsx'))
+Estadio <- import(here('./data/raw/Estadio.xlsx'))
+temporadas_años <- data.frame(AÑO = 2009:2022,
+                              TEMPORADA = c("09/10","10/11","11/12",
+                                            "12/13","13/14","14/15","15/16",
+                                            "16/17","17/18","18/19","19/20",
+                                            "20/21","21/22","22/23"))
+Equipos <- import(here('./data/aux/Equipos.xlsx'))
 
 Transfermarkt <- Attendance %>%
-  inner_join(temporadas_años, by = "Temporada") %>%
-  inner_join(Market, by = c("Handle","Año")) %>%
-  inner_join(Estadio, by = "Handle") %>%
-  inner_join(lista %>% select("Equipo","Transfermarkt Handle"), 
-             by = c("Handle" = "Transfermarkt Handle")) %>%
-  left_join(Ranking, by = c("Handle" = "Equipo","Año" = "año")) %>%
-  filter(Año < Fin, Año >= Construccion) %>%
-  mutate(win_pct = G / (G + E + P)) %>%
-  rename(asistencia = Asistencia,
-         capacidad = Capacidad,
-         vm_plantilla = MV,
-         ventas = Ventas,
-         fichajes = Fichajes,
-         neto_transferencias = Neto,
-         construccion_estadio = Construccion)
+  inner_join(temporadas_años, by = "TEMPORADA") %>%
+  inner_join(Transfers, by = c("TRANSFERMARKT_HANDLE","AÑO")) %>%
+  inner_join(Estadio, by = "TRANSFERMARKT_HANDLE") %>%
+  inner_join(Equipos %>% select("EQUIPO","TRANSFERMARKT_HANDLE","TRANSFERMARKT_ID","PAIS"), 
+             by = c("TRANSFERMARKT_HANDLE")) %>%
+  left_join(Ranking, by = c("TRANSFERMARKT_HANDLE","AÑO","PAIS")) %>%
+  filter(AÑO < FIN, AÑO >= CONSTREST)
+```
+
+```{r}
+Transfermarkt <- Transfermarkt %>%
+  mutate(WINPCT = G / (G + E + P),
+         OCUPACION = ASISTENCIA / CAPACIDAD,
+         ANTEST = 2024 - CONSTREST)
 
 Transfermarkt <- Transfermarkt %>%
-  group_by(Equipo) %>%
-  arrange(Año) %>%
-  mutate(vm_plantilla_roll = calculate_moving_average(vm_plantilla),
-         neto_transferencias_roll = calculate_moving_average(neto_transferencias),
-         win_pct_roll = calculate_moving_average(win_pct),
-         posicion_roll = calculate_moving_average(Posicion),
-         ast_pct = asistencia/capacidad) %>%
-  ungroup() %>%
-  select(-c(G,E,P,pts,pais,Fin))
+  rowwise() %>% 
+  mutate(RANKNAC = calculate_rank(PAIS, DIV, POSIC, AÑO)) %>%
+  ungroup() 
 
-save(Transfermarkt,
-     file = "./datos/Transfermarkt.RData")
+Transfermarkt <- Transfermarkt %>%
+  group_by(EQUIPO) %>%
+  arrange(AÑO) %>%
+  mutate(WINPCT5 = calculate_moving_average(WINPCT),
+         MV5  = calculate_moving_average(MV),
+         NETTRANSF = calculate_moving_average(NETTRANSF),
+         RANKNAC5 = calculate_moving_average(RANKNAC)) %>%
+  ungroup()
+```
+
+```{r}
+Transfermarkt <- Transfermarkt %>%
+  select(-c(G,
+            E,P,PTS,PAIS,FIN,DIV,POSIC,TRANSFERMARKT_ID,
+            TRANSFERMARKT_HANDLE,TEMPORADA,CONSTREST)) %>%
+  filter(complete.cases(.))
+
+export(Transfermarkt, here('./data/processed/Transfermarkt.xlsx'), rowNames = F)
 ```
 

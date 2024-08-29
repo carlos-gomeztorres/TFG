@@ -5,7 +5,7 @@ library(parallel)
 library(rvest)
 library(dplyr)
 
-TRANSF_PATH <- here('./data/processed/Transfers.xlsx')
+TRANSF_PATH <- here('./data/raw/Transfers.xlsx')
 
 transfers_info <- function(row) {
   
@@ -26,9 +26,9 @@ transfers_info <- function(row) {
   #' Esta información se devuelve en forma de un dataframe de una sola fila
   
   tryCatch({
-    id <- trimws(row['Transfermarkt ID'])
-    handle <- trimws(row['Transfermarkt Handle'])
-    año <- trimws(row['Año'])
+    id <- trimws(row['TRANSFERMARKT_ID'])
+    handle <- trimws(row['TRANSFERMARKT_HANDLE'])
+    año <- trimws(row['AÑO'])
     
     url <- paste0('https://www.transfermarkt.com/', 
                   handle,
@@ -76,12 +76,12 @@ transfers_info <- function(row) {
     # Resultado neto
     transfers_net <- transfers_in - transfers_out
     
-    df <- data.frame(Handle = handle,
-                     Año = año,
+    df <- data.frame(TRANSFERMARKT_HANDLE = handle,
+                     AÑO = año,
                      MV = market_value,
-                     Ventas = transfers_in,
-                     Fichajes = transfers_out,
-                     Neto = transfers_net)
+                     VENTAS = transfers_in,
+                     FICHAJES = transfers_out,
+                     NETTRANSF = transfers_net)
     
     return(df)
   },
@@ -99,24 +99,24 @@ if (file.exists(TRANSF_PATH)) {
   Transfers <- import(TRANSF_PATH)
 } else {
   Transfers <- data.frame(
-    Handle = character(),
-    Año = numeric(),
+    TRANSFERMARKT_HANDLE = character(),
+    AÑO = numeric(),
     MV = numeric(),
-    Ventas = numeric(),
-    Fichajes = numeric(),
-    Neto = numeric()
+    VENTAS = numeric(),
+    FICHAJES = numeric(),
+    NETTRANSF = numeric()
   )
 }
 
 Equipos <- import(here('./data/aux/Equipos.xlsx'))
-temporadas_años <- data.frame(Año = 2009:2022,
-                              Temporada = c("09/10","10/11","11/12",
+temporadas_años <- data.frame(AÑO = 2009:2022,
+                              TEMPORADA = c("09/10","10/11","11/12",
                                             "12/13","13/14","14/15","15/16",
                                             "16/17","17/18","18/19","19/20",
                                             "20/21","21/22","22/23"))
 
 df <- merge(Equipos, temporadas_años) %>%
-  anti_join(Transfers, by = c("Transfermarkt Handle" = "Handle","Año" = "Año"))
+  anti_join(Transfers, by = c("TRANSFERMARKT_HANDLE","AÑO"))
 
 
 num_cores <- detectCores() - 1
@@ -125,6 +125,8 @@ df_list <- mclapply(1:nrow(df),
                     function(i) transfers_info(df[i, ]), 
                     mc.cores = num_cores)
 
-newrows <- do.call(rbind, df_list) %>% filter(!is.na(Handle))
+newrows <- do.call(rbind, df_list) %>% filter(!is.na(TRANSFERMARKT_HANDLE))
 Transfers <- rbind(Transfers, newrows)
+
+Transfers$AÑO <- as.numeric(Transfers$AÑO)
 export(Transfers, TRANSF_PATH, rowNames = F)

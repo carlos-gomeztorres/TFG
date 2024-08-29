@@ -4,7 +4,7 @@ library(rio)
 library(parallel)
 library(rvest)
 library(dplyr)
-EST_PATH <- here('./data/processed/Estadio.xlsx')
+EST_PATH <- here('./data/raw/Estadio.xlsx')
 
 estadio_info <- function(row) {
   
@@ -20,8 +20,8 @@ estadio_info <- function(row) {
   #' estadio por temporada.
     
   tryCatch({
-    id <- trimws(row['Transfermarkt ID'])
-    handle <- trimws(row['Transfermarkt Handle'])
+    id <- trimws(row['TRANSFERMARKT_ID'])
+    handle <- trimws(row['TRANSFERMARKT_HANDLE'])
     
     url <- paste0('https://www.transfermarkt.com/', 
                   handle,
@@ -52,20 +52,20 @@ estadio_info <- function(row) {
         html_text2() %>%
         as.numeric()
       
-      df <- data.frame(Handle = handle,
-                       Construccion = construccion_estadio,
-                       Capacidad = capacidad_total,
-                       Fin = NA)
+      df <- data.frame(TRANSFERMARKT_HANDLE = handle,
+                       CONSTREST = construccion_estadio,
+                       CAPACIDAD = capacidad_total,
+                       FIN = NA)
       
       return(df)
     
     # Si existe una lista de opciones, entonces hay info de más de un estadio
     } else {
       
-      df <- data.frame(Handle = character(),
-                       Construccion = numeric(), 
-                       Capacidad = numeric(),
-                       Fin = numeric())
+      df <- data.frame(TRANSFERMARKT_HANDLE = character(),
+                       CONSTREST = numeric(), 
+                       CAPACIDAD = numeric(),
+                       FIN = numeric())
       
       # Extraemos la lista de los ids de los estadios, que nos permite 
       # construir la url a su info en concreto.
@@ -104,10 +104,10 @@ estadio_info <- function(row) {
         # Guardamos únicamente de estadios que disponen de información del año de 
         # construcción y capacidad total.
         if (length(c(construccion_estadio,capacidad_total)) == 2) {
-          X <- data.frame(Handle = handle, 
-                          Construccion = construccion_estadio,
-                          Capacidad = capacidad_total,
-                          Fin = NA)
+          X <- data.frame(TRANSFERMARKT_HANDLE = handle, 
+                          CONSTREST = construccion_estadio,
+                          CAPACIDAD = capacidad_total,
+                          FIN = NA)
           
           df <- rbind(df, X)
         }
@@ -129,17 +129,17 @@ if (file.exists(EST_PATH)) {
   Estadio <- import(EST_PATH)
 } else {
   Estadio <- data.frame(
-    Handle = character(),
-    Construccion = numeric(),
-    Capacidad = numeric(),
-    Fin = numeric()
+    TRANSFERMARKT_HANDLE = character(),
+    CONSTREST = numeric(),
+    CAPACIDAD = numeric(),
+    FIN = numeric()
   )
 }
 
 Equipos <- import(here('./data/aux/Equipos.xlsx'))
 
 df <- Equipos %>%
-  anti_join(Estadio, by = c("Transfermarkt Handle" = "Handle"))
+  anti_join(Estadio, by = "TRANSFERMARKT_HANDLE")
 
 num_cores <- detectCores() - 1
 
@@ -147,26 +147,25 @@ df_list <- mclapply(1:nrow(df),
                     function(i) estadio_info(df[i, ]), 
                     mc.cores = num_cores)
 
-newrows <- do.call(rbind, df_list) %>% filter(!is.na(Handle))
+newrows <- do.call(rbind, df_list) %>% filter(!is.na(TRANSFERMARKT_HANDLE))
 Estadio <- rbind(Estadio, newrows) %>% 
-  filter(!is.na(Handle))
+  filter(!is.na(TRANSFERMARKT_HANDLE))
 
 estadios_post_2009 <- Estadio %>%
-  filter(Construccion >= 2009) %>%
-  group_by(Handle) %>%
-  filter(Capacidad == max(Capacidad)) %>%
-  mutate(Fin = 2024)
+  filter(CONSTREST >= 2009) %>%
+  group_by(TRANSFERMARKT_HANDLE) %>%
+  filter(CAPACIDAD == max(CAPACIDAD)) %>%
+  mutate(FIN = 2024)
 
 estadios_pre_2009 <- Estadio %>%
-  select(-c(Fin)) %>%
-  filter(Construccion < 2009) %>%
-  group_by(Handle) %>%
-  filter(Construccion == max(Construccion), 
-         Capacidad == max(Capacidad)) %>%
-  left_join(estadios_post_2009 %>% select(Handle, Fin = Construccion), by ="Handle") %>%
-  mutate(Fin = ifelse(is.na(Fin), 2024, Fin))
+  select(-c(FIN)) %>%
+  filter(CONSTREST < 2009) %>%
+  group_by(TRANSFERMARKT_HANDLE) %>%
+  filter(CAPACIDAD == max(CAPACIDAD)) %>%
+  left_join(estadios_post_2009 %>% select(TRANSFERMARKT_HANDLE, FIN = CONSTREST), by ="TRANSFERMARKT_HANDLE") %>%
+  mutate(FIN = ifelse(is.na(FIN), 2024, FIN))
 
 Estadio <- rbind(estadios_pre_2009, estadios_post_2009) %>%
-  mutate(Capacidad = as.numeric(gsub("\\.", "",Capacidad)))
+  mutate(CAPACIDAD = as.numeric(gsub("\\.", "",CAPACIDAD)))
 
 export(Estadio, EST_PATH,rowNames = F)

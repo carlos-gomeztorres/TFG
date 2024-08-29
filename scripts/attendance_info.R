@@ -4,7 +4,7 @@ library(rio)
 library(parallel)
 library(rvest)
 library(dplyr)
-ATT_PATH <- here('./data/processed/Attendance.xlsx')
+ATT_PATH <- here('./data/raw/Attendance.xlsx')
 
 attendance_info <- function(row) {
   
@@ -19,8 +19,8 @@ attendance_info <- function(row) {
   #' del estadio por temporada.
   
   tryCatch({
-    id <- trimws(row['Transfermarkt ID'])
-    handle <- trimws(row['Transfermarkt Handle'])
+    id <- trimws(row['TRANSFERMARKT_ID'])
+    handle <- trimws(row['TRANSFERMARKT_HANDLE'])
     
     #https://www.transfermarkt.com/real-madrid/besucherzahlenentwicklung/verein/418
     url <- paste0('https://www.transfermarkt.com/', 
@@ -43,7 +43,7 @@ attendance_info <- function(row) {
       html_elements('tr td:first-child') %>%
       html_text2()
     
-    df <- data.frame(Handle = handle, Temporada = season, Asistencia = att)
+    df <- data.frame(TRANSFERMARKT_HANDLE = handle, TEMPORADA = season, ASISTENCIA = att)
     
     return(df)
   
@@ -62,16 +62,16 @@ if (file.exists(ATT_PATH)) {
   Attendance <- read_xlsx(ATT_PATH)
 } else {
   Attendance <- data.frame(
-    Handle = character(),
-    Temporada = character(),
-    Asistencia = numeric()
+    TRANSFERMARKT_HANDLE = character(),
+    TEMPORADA = character(),
+    ASISTENCIA = numeric()
   )
 }
 
 Equipos <- import(here('./data/aux/Equipos.xlsx'))
 
 df <- Equipos %>%
-  anti_join(Attendance, by = c("Transfermarkt Handle" = "Handle"))
+  anti_join(Attendance, by = "TRANSFERMARKT_HANDLE")
 
 num_cores <- detectCores() - 1
 
@@ -79,7 +79,7 @@ df_list <- mclapply(1:nrow(df),
                     function(i) attendance_info(df[i, ]), 
                     mc.cores = num_cores)
 
-newrows <- do.call(rbind, df_list) %>% filter(!is.na(Handle))
+newrows <- do.call(rbind, df_list) %>% filter(!is.na(TRANSFERMARKT_HANDLE))
 
 Attendance <- rbind(Attendance, newrows)
 export(Attendance, ATT_PATH, rowNames = F)

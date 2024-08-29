@@ -5,8 +5,7 @@ library(parallel)
 library(rvest)
 library(dplyr)
 library(stringr)
-RNK_PATH <- here('./data/processed/Ranking.xlsx')
-
+RNK_PATH <- here('./data/raw/Ranking.xlsx')
 ranking_info <- function(row) {
   
   id <- trimws(row[['id']])
@@ -17,16 +16,16 @@ ranking_info <- function(row) {
   pais <- row[['País']]
   
   ranking <- data.frame(
-    Posicion = numeric(),
-    Equipo = character(),
+    POSICION = numeric(),
+    TRANSFERMARKT_HANDLE = character(),
     G = numeric(),
     E = numeric(),
     P = numeric(),
-    neto_goles = numeric(),
-    pts = numeric(),
-    div = numeric(),
-    año = numeric(),
-    pais = numeric()
+    NET_GLS = numeric(),
+    PTS = numeric(),
+    DIV = numeric(),
+    AÑO = numeric(),
+    PAIS = numeric()
   )
   
   for (año in inicio:fin) {
@@ -55,12 +54,15 @@ ranking_info <- function(row) {
     
     names(table) <- c("Posicion","Equipo","G","E","P","neto_goles","pts")
     
-    table$Equipo <- handles_equipos
+    table$TRANSFERMARKT_HANDLE <- handles_equipos
     
     table <- table %>%
-      mutate(div = div,
-             año = año,
-             pais = pais)
+      mutate(DIV = div,
+             AÑO = año,
+             PAIS = pais) %>%
+      rename(POSIC = Posicion,
+             PTS = pts,
+             NET_GLS = neto_goles)
     
     ranking <- rbind(ranking, table)
     
@@ -77,5 +79,6 @@ df_list <- mclapply(1:nrow(competencias),
                     function(i) ranking_info(competencias[i,]), 
                     mc.cores = num_cores)
 
-Ranking <- do.call(rbind, df_list)
+Ranking <- do.call(rbind, df_list) 
+
 export(Ranking, RNK_PATH,rowNames = F)

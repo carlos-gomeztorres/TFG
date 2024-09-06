@@ -6,6 +6,7 @@ library(rvest)
 library(dplyr)
 library(stringr)
 RNK_PATH <- here('./data/raw/Ranking.xlsx')
+source(here('./scripts/calculate_rank.R'))
 ranking_info <- function(row) {
   
   id <- trimws(row[['id']])
@@ -79,6 +80,10 @@ df_list <- mclapply(1:nrow(competencias),
                     function(i) ranking_info(competencias[i,]), 
                     mc.cores = num_cores)
 
-Ranking <- do.call(rbind, df_list) 
+Ranking <- do.call(rbind, df_list)
 
+Ranking <- Ranking %>%
+  mutate(RANKNAC = calculate_rank(POSIC,DIV,PAIS,AÑO))
+  
 export(Ranking, RNK_PATH,rowNames = F)
+

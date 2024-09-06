@@ -1,22 +1,35 @@
-calculate_rank <- function(pais, div, pdiv, año) {
+calculate_rank <- function(pdiv, div, pais, año, console = F) {
   
-  delta <- ifelse(pais == "Alemania", 18, 20)
-  alpha <- ifelse(div == 1, 0, 1)
   
-  if (pais == "España") {
-    gamma <- delta + 22
-  } else if (pais == "Inglaterra") {
-    gamma <- delta + 24
-  } else if (pais == "Alemania") {
-    gamma <- delta + 18
-  } else if (pais == "Francia") {
-    gamma <- delta + 20
-  } else if (pais == "Italia") {
-    gamma <- delta + ifelse(año < 2018, 22, 20)
+  alpha <- Ranking %>%
+    filter(DIV == 1, AÑO == año, PAIS == pais) %>%
+    summarise(alpha = max(POSIC)) %>%
+    pull(alpha)
+  
+  beta <- Ranking %>%
+    filter(DIV == 2, AÑO == año, PAIS == pais) %>%
+    summarise(beta = max(POSIC)) %>%
+    pull(beta)
+  
+  gamma <- Ranking %>%
+    filter(DIV == 3, AÑO == año, PAIS == pais) %>%
+    summarise(gamma = max(POSIC)) %>%
+    pull(gamma)
+  
+  pglob <- pdiv + (div %in% c(2,3))* alpha + (div==3)*beta
+  
+  if(console) {
+    print(paste(pais,"-",año))
+    print(paste("Nº de equipos 1ª división:", alpha))
+    print(paste("Nº de equipos 2ª división:", beta))
+    print(paste("Nº de equipos 3ª división:", gamma))
+    print("")
+    print(paste("División del equipo:",div))
+    print(paste("Posición del equipo en su división:", pdiv))
+    print(paste("Posición global del equipo:", pglob))
   }
   
-  pglob <- pdiv + alpha * delta
-  RANKNAC <- (1 - (pglob - 1)/(gamma - 1))*100
+  RANKNAC <- (1 - (pglob - 1)/(alpha+beta+gamma - 1))*100
   
   return(RANKNAC)
   

@@ -134,11 +134,55 @@ Deals <- import(here('./data/raw/Deals.xlsx')) %>%
          FECHA = `Last deal status date`) %>%
   mutate(VALOR = as.numeric(VALOR)/1e6,
          PART = as.numeric(PART),
-         AÑO = year(FECHA)) %>%
+         AÑO = year(FECHA),
+         ID = 1:nrow(.)) %>%
   filter(!is.na(EQUIPO),
-         !is.na(VALOR),
-         !is.na(PART),
-         between(AÑO, 2014, 2023))
+         between(AÑO, 2014, 2023),
+         TIPO_DEAL != "Acquisition increased from 100% to 100%")
+
+exchange_rates <- import(here('./data/aux/exchange_rates.xlsx'))
+
+Deals %>%
+  filter(is.na(VALOR)) %>%
+  select(ID, EQUIPO, COMPRADOR, AÑO)
+
+# Leeds 2023
+# FUENTE: https://www.cityam.com/who-owns-leeds-united-how-much-did-the-49ers-group-pay-andrea-radrizzani-in-2023/
+Deals$PART[Deals$ID == 6] <- 56
+Deals$VALOR[Deals$ID == 6] <- 170*exchange_rates$rate[exchange_rates$Año == 2018]
+Deals$COMPRADOR[Deals$ID == 6] <- "49ERS ENTERPRISES PTY LTD"
+
+#Palermo 2016
+#FUENTE: https://www.goal.com/en/news/man-city-owners-set-buy-italian-club-palermo-eur13m-takeover/bltd77f0ea0764de0f7
+Deals$PART[Deals$ID == 16] <- 80
+Deals$VALOR[Deals$ID == 16] <- 13
+
+# Ascoli 2021
+Deals$PART[Deals$ID == 19] <- 31
+Deals$VALOR[Deals$ID == 19] <- 6.2
+Deals$COMPRADOR[Deals$ID == 19] <- "NORTH SIXTH GROUP"
+
+# Ipswich 2021
+Deals$VALOR[Deals$ID == 25]  <- 40
+# 2023	Bright Path Sports Partners	40%	Up to £105 million (IPSWICH)
+
+# Toulouse 2020
+Deals$VALOR[Deals$ID == 32]  <- 20
+
+# Everton, 2016, Moshiri, 49,9%, GBP 200m
+
+# Como, 2019, SENT ENTERTAINMENT
+Deals$VALOR[Deals$ID == 40] <- 0.85
+
+# Elche CF, 2019, SCORE CLUB 2019 SL
+Deals$PART[Deals$ID == 36] <- 70
+Deals$VALOR[Deals$ID == 36] <- 20
+
+Deals$ID[grepl("unknown majority stake %",Deals$TIPO_DEAL, fixed=T)]
+
+Deals$PART[Deals$ID %in% c(13,23)] <- 80
+
+Deals$VALOR[Deals$ID == 7] <- 25
 ```
 
 ```{r}

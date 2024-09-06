@@ -5,13 +5,21 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
+```{r setup, include=FALSE}
+# Configuración global para todos los chunks
+knitr::opts_chunk$set(results = 'hold',
+                      message = FALSE, 
+                      warning = FALSE)
+```
+
+
 # Carga de paquetes
 ```{r}
 library(rio)
 library(here)
 library(tidyverse)
 library(zoo)
-source(here('./scripts/calculate_rank.R'))
+
 calculate_moving_average <- function(x) {
   rollapply(x, width = 5, FUN = mean, align = "right", fill = NA)
 }
@@ -23,11 +31,11 @@ Transfers <- import(here('./data/raw/Transfers.xlsx'))
 Ranking <- import(here('./data/raw/Ranking.xlsx'))
 Attendance <- import(here('./data/raw/Attendance.xlsx'))
 Estadio <- import(here('./data/raw/Estadio.xlsx'))
-temporadas_años <- data.frame(AÑO = 2009:2022,
+temporadas_años <- data.frame(AÑO = 2009:2023,
                               TEMPORADA = c("09/10","10/11","11/12",
                                             "12/13","13/14","14/15","15/16",
                                             "16/17","17/18","18/19","19/20",
-                                            "20/21","21/22","22/23"))
+                                            "20/21","21/22","22/23","23/24"))
 Equipos <- import(here('./data/aux/Equipos.xlsx'))
 
 Transfermarkt <- Attendance %>%
@@ -38,6 +46,18 @@ Transfermarkt <- Attendance %>%
              by = c("TRANSFERMARKT_HANDLE")) %>%
   left_join(Ranking, by = c("TRANSFERMARKT_HANDLE","AÑO","PAIS")) %>%
   filter(AÑO < FIN, AÑO >= CONSTREST)
+
+
+Transfermarkt <- Transfermarkt %>%
+  mutate(CAPACIDAD = case_when(
+    EQUIPO == "Chelsea" & between(AÑO, 2013, 2017) ~ 41798, 
+    EQUIPO == "Clermont Foot" & AÑO >= 2018 ~ 13000,
+    EQUIPO == "Düsseldorf" ~ 54600,  # Se corrigió la sintaxis aquí
+    EQUIPO == "Manchester United" & between(AÑO, 2013, 2017) ~ 75643, 
+    EQUIPO == "Tottenham Hotspur" & between(AÑO, 2013, 2018) ~ 90000,
+    EQUIPO == "CD Eldense" & AÑO == 2023 ~ 5776 ,
+    TRUE ~ CAPACIDAD
+  ))
 ```
 
 ```{r}
@@ -47,19 +67,55 @@ Transfermarkt <- Transfermarkt %>%
          ANTEST = 2024 - CONSTREST)
 
 Transfermarkt <- Transfermarkt %>%
-  rowwise() %>% 
-  mutate(RANKNAC = calculate_rank(PAIS, DIV, POSIC, AÑO)) %>%
-  ungroup() 
-
-Transfermarkt <- Transfermarkt %>%
   group_by(EQUIPO) %>%
   arrange(AÑO) %>%
   mutate(WINPCT5 = calculate_moving_average(WINPCT),
          MV5  = calculate_moving_average(MV),
-         NETTRANSF = calculate_moving_average(NETTRANSF),
+         NETTRANSF5 = calculate_moving_average(NETTRANSF),
          RANKNAC5 = calculate_moving_average(RANKNAC)) %>%
-  ungroup()
+  ungroup() %>%
+  filter(complete.cases(.))
 ```
+
+```{r}
+Transfermarkt %>%
+  mutate(DIV = as.factor(DIV)) %>%
+  ggplot() +
+  geom_point(aes(x = WINPCT,y = RANKNAC, color = DIV)) +
+  scale_color_viridis(discrete = T,
+                      name = "División",
+                      labels = c("Primera","Segunda","Tercera")) +
+  facet_wrap(~PAIS) +
+  geom_hline(yintercept = c(72,35), linetype = "dashed") +
+  labs(x = "Win %",
+       y = "Rank") +
+  theme_bw()
+
+
+Transfermarkt %>%
+  mutate(DIV = as.factor(DIV)) %>%
+  ggplot() +
+  geom_point(aes(x = RANKNAC,y = RANKNAC5, color = DIV)) +
+  scale_color_viridis(discrete = T,
+                      name = "División",
+                      labels = c("Primera","Segunda","Tercera")) +
+  facet_wrap(~PAIS) +
+  labs(x = "Rank",
+       y = "Rank (last 5 yrs)") +
+  theme_bw()
+
+Transfermarkt %>%
+  mutate(DIV = as.factor(DIV)) %>%
+  ggplot() +
+  geom_point(aes(x = MV,y = RANKNAC, color = DIV)) +
+  scale_color_viridis(discrete = T,
+                      name = "División",
+                      labels = c("Primera","Segunda","Tercera")) +
+  scale_x_log10() +
+  facet_wrap(~PAIS) +
+  theme_bw()
+```
+
 
 ```{r}
 Transfermarkt <- Transfermarkt %>%
@@ -67,6 +123,7 @@ Transfermarkt <- Transfermarkt %>%
             E,P,PTS,PAIS,FIN,DIV,POSIC,TRANSFERMARKT_ID,
             TRANSFERMARKT_HANDLE,TEMPORADA,CONSTREST)) %>%
   filter(complete.cases(.))
+
 
 export(Transfermarkt, here('./data/processed/Transfermarkt.xlsx'), rowNames = F)
 ```

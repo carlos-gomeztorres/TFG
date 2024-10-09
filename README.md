@@ -1,47 +1,84 @@
-# Metodologías de Machine Learning para Valorar Equipos de Fútbol Profesionales como Activos de Inversión
-Este repositorio contiene el código y la documentación asociados a mi trabajo de fin de grado titulado "Metodologías de Machine Learning para valorar equipos de fútbol profesionales como activos de inversión". El proyecto explora diversas técnicas de machine learning y su aplicación para evaluar el valor de los equipos de fútbol, proporcionando una perspectiva innovadora para inversores en el sector deportivo.
+# Unsupervised Machine Learning for Football Club Valuation
 
-**Contenido**
-- [Introducción](#introducción)
-- [Estructura del Proyecto](#estructura)
-- [Instalación](#instalación)
-- [Uso](#uso)
-- [Licencia](#licencia)
+## Description
+This repository contains the code, data, and supplementary materials for the research paper titled "Valuing European Football Clubs as Investment Assets through Unsupervised Machine Learning Algorithms". The paper explores the application of advanced machine learning techniques such as Principal Component Analysis (PCA), Self-Organizing Maps (SOM), and Agglomerative Hierarchical Clustering to assess the investment potential of football clubs. By utilizing these unsupervised learning techniques, the research aims to enhance the reliability and granularity of football club valuations, offering stakeholders a data-driven framework for more informed decision-making.
 
-## Introducción
-El objetivo de este proyecto es desarrollar un modelo de machine learning que pueda estimar el valor de mercado de los equipos de fútbol profesionales. Para ello, se han utilizado datos financieros, deportivos y demográficos, así como diversas metodologías de machine learning, como la regresión lineal, los árboles de decisión y los modelos de redes neuronales..
+## Table of Contents
+1. [Structure](#structure)
+2. [Technologies Used](#tech-used)
+3. [Installation and Setup](#install)
+4. [Data](#data)
+5. [Data and Usage](#usage)
 
-## Estructura
+## Structure {#structure}
+
+``` bash
 .
-├── data/               # Datos crudos y procesados
-├── notebooks/          # Jupyter notebooks con análisis exploratorio y desarrollo de modelos
-├── scripts/            # Scripts de Python para procesamiento de datos y entrenamiento de modelos
-├── models/             # Modelos entrenados y resultados
-├── reports/            # Informes y resultados del análisis
-└── README.md           # Este archivo
-
-## Instalación
-Para ejecutar el proyecto en tu máquina local, sigue los siguientes pasos:
-
-Clonar el repositorio:
-
-``` bash
-git clone https://github.com/tuusuario/nombre-del-repo.git
-cd nombre-del-repo
-Crear y activar un entorno virtual:
+├── data/               # Contains raw, auxiliary, processed, and scraped data
+│   ├── raw/            # Raw data used in the project
+│   ├── aux/            # Auxiliary data for support calculations and scraping
+│   ├── processed/      # Cleaned and preprocessed data ready for analysis
+│   └── scraped/        # Scraped data collected from Transfermarkt
+│
+├── notebooks/          # RMarkdown notebooks with data preprocessing and modeling
+│   ├── financial_data_preprocessing.Rmd   # Preprocessing steps for financial data
+│   ├── football_data_preprocessing.Rmd    # Preprocessing steps for football performance data
+│   └── Main.Rmd        # Main notebook with clustering and valuation analysis
+│
+├── scripts/            # R scripts for data collection, functions, and plotting
+│   ├── scraping/       # Scripts for web scraping data from Transfermarkt
+│   ├── functions/      # Helper functions for calculations and data transformations
+│   └── plotting/       # Scripts for data visualization
+│
+└── README.md           # This file, providing an overview of the repository
 ```
 
+## Technologies Used {#tech-used}
+
+This project is entirely implemented in R. The following R packages are crucial for different aspects of the project:
+
+| **Project Part**                | **Packages**                                    |
+|----------------------------------|-------------------------------------------------|
+| Web Scraping                     | `rvest`, `parallel`                             |
+| Data Manipulation                | `tidyverse`                                    |
+| Principal Component Analysis (PCA)| `base: prcomp`                                 |
+| Self-Organizing Maps (SOM)      | `kohonen`                                      |
+| Hierarchical Clustering          | `base: hclust`                                 |
+| ANOVA                            | `agricolae`                                    |
+| Visualization                    | `ggplot2`, `corrplot`, `viridis`, `kableExtra`, `patchwork` |
+
+Ensure these packages are installed to successfully run the code.
+
+## Installation & Setup {#install}
+
+Clone the repository to your local machine:
+
 ``` bash
-python3 -m venv env
-source env/bin/activate  # En Windows usa `env\Scripts\activate`
-```
-Instalar las dependencias:
-``` bash
-pip install -r requirements.txt
+git clone https://github.com/carlos-gomeztorres/TFG.git
+cd TFG
 ```
 
-## Uso
-Para reproducir los análisis y modelos, puedes utilizar los notebooks de la carpeta notebooks. Asegúrate de tener todas las dependencias instaladas y de haber configurado correctamente tu entorno.
+## Data {#data}
 
-- **Análisis Exploratorio**: Revisa el notebook notebooks/EDA.ipynb para un análisis preliminar de los datos.
-- **Entrenamiento de Modelos**: Utiliza el notebook notebooks/Model_Training.ipynb para entrenar los modelos y evaluar su rendimiento.
+This project uses two primary data sources: financial data from ORBIS and football performance data scraped from Transfermarkt.
+
+### Financial Data (ORBIS)
+
+The financial data for the football clubs in this project comes from ORBIS, a comprehensive global database containing financial information on companies worldwide. 
+
+ORBIS is widely regarded as a reliable resource for financial research, particularly in the areas of corporate valuation and benchmarking, making it an ideal source for assessing football clubs' financial health and investment potential.
+
+### Football Data (Transfermarkt)
+
+The football performance and player market values data were scraped from Transfermarkt (https://www.transfermarkt.com/), a leading online platform that provides in-depth data on football clubs, players, transfers, match results, and other relevant statistics. Transfermarkt is known for its extensive coverage of the football market, including the estimated market value of players, squad composition, and performance metrics for clubs.
+
+For this project, Transfermarkt was scraped to gather data on player values, team performance, and transfers, which were then combined with financial data to give a holistic valuation of football clubs.
+
+## Usage {#usage}
+
+The final datasets used for this project can be found in the data/processed folder, consisting of:
+- Transfermarkt.xlsx
+- Finances.xlsx
+- M&A.xlsx
+
+The analysis is conducted in the Main.Rmd notebook, which applies PCA, SOM, and Hierarchical Clustering for football club valuation.

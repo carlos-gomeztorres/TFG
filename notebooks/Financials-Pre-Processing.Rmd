@@ -1,0 +1,202 @@
+---
+title: "Preparation of Financial Data"
+output: html_notebook
+---
+
+This notebook shows the steps taken to pre-process and prepare the financial data extracted from ORBIS and individual football club accounts. 
+
+# Packages
+```{r}
+library(here)
+library(readxl)
+library(tidyverse)
+library(lubridate)
+library(rio)
+```
+
+# ORBIS 
+## Assets
+```{r}
+asset <- read_xlsx(here("./data/raw/Assets.xlsx"))
+
+asset[asset == "n.d."] <- NA
+
+asset <- asset %>%
+  rename(Team = `Nombre empresaAlfabeto latino`,
+         BvD_ID = `Número de identificación BvD`,
+         row = `...1`) 
+
+cols_to_pivot <- setdiff(names(asset), c("Team", "BvD_ID","row", "Standardized country"))
+
+asset <- asset %>%
+  pivot_longer(cols = all_of(cols_to_pivot), names_to = "column", values_to = "value") %>%
+  mutate(
+    Cuenta = gsub("\\s+EUR\\s+\\d+", "", column),
+    YEAR = as.numeric(gsub(".*\\b(\\d{4})\\b.*", "\\1", column)),
+    value = as.numeric(value)/1e6
+  )  %>%
+  select(-c(row,column)) %>%
+  pivot_wider(names_from = "Cuenta", values_from = "value") %>%
+  select(BvD_ID,
+         YEAR,
+         INTANGIBLE = `Inmovilizado inmaterial`,
+         TANGIBLE = `Inmovilizado material`)
+
+asset
+```
+
+## Liabilities
+```{r}
+liabilities <- read_xlsx(here("./data/raw/Liabilities.xlsx"))
+
+liabilities[liabilities == "n.d."] <- NA
+
+liabilities <- liabilities %>%
+  rename(Team = `Nombre empresaAlfabeto latino`,
+         BvD_ID = `Número de identificación BvD`,
+         row = `...1`) 
+
+cols_to_pivot <- setdiff(names(liabilities), c("Team", "BvD_ID","row", "Standardized country"))
+
+liabilities <- liabilities %>%
+  pivot_longer(cols = all_of(cols_to_pivot), names_to = "column", values_to = "value") %>%
+  mutate(
+    Cuenta = gsub("\\s+EUR\\s+\\d+", "", column),
+    YEAR = as.numeric(gsub(".*\\b(\\d{4})\\b.*", "\\1", column)),
+    value = as.numeric(value)/1e6
+  )  %>%
+  select(-c(Team, row,column)) %>%
+  pivot_wider(names_from = "Cuenta", values_from = "value") %>%
+  select(BvD_ID,
+         YEAR,
+        # liabilitiess
+        `Equity` = `Fondos de los accionistas`, 
+        `Long-Term liabilities` =  `Pasivos no corrientes`,
+        `Short-Term liabilities` = `Deudas a corto plazo`,
+        `Total liabilities` = `Total pasivo`)
+```
+
+## Profit and Loss
+```{r}
+PnL <- read_xlsx(here("./data/raw/PnL.xlsx"))
+
+PnL[PnL == "n.d."] <- NA
+
+PnL <- PnL %>%
+  rename(Team = `Nombre empresaAlfabeto latino`,
+         BvD_ID = `Número de identificación BvD`,
+         row = `...1`) 
+
+cols_to_pivot <- setdiff(names(PnL), c("Team", "BvD_ID","row", "Standardized country"))
+
+PnL <- PnL %>%
+  pivot_longer(cols = all_of(cols_to_pivot), names_to = "column", values_to = "value") %>%
+  mutate(
+    Cuenta = gsub("\\s+EUR\\s+\\d+", "", column),
+    YEAR = as.numeric(gsub(".*\\b(\\d{4})\\b.*", "\\1", column)),
+    value = as.numeric(value)/1e6
+  )  %>%
+  select(-c(Team, row,column)) %>%
+  pivot_wider(names_from = "Cuenta", values_from = "value") %>%
+  select(BvD_ID,
+         YEAR,
+         # PnL
+         REVENUE = `Ingresos explotación (Cifra ventas)`, 
+         EBIT=`P/G operacionales [=EBIT]`)
+
+PnL
+```
+
+# Join with manually gathered data
+```{r}
+Teams <- import(here('./data/aux/Teams.xlsx')) %>%
+  filter(COUNTRY %in% c("Spain","England","Italy","Germany","France"))
+
+Finances <- asset %>%
+  inner_join(PnL,
+            by = c("BvD_ID", "YEAR")) %>%
+  inner_join(Teams, by = c("BvD_ID")) %>%
+  select(-c(TRANSFERMARKT_HANDLE,TRANSFERMARKT_ID,BvD_ID)) %>%
+  filter(complete.cases(.))
+
+NOT_ORBIS <- import(here('./data/raw/other_accounts.xlsx')) %>%
+  select(names(Finances))
+
+Finanzas <- rbind(Finances,NOT_ORBIS) %>%
+  distinct()
+```
+
+
+# M&A Deals
+```{r, warning = F}
+Deals <- import(here('./data/raw/Deals.xlsx')) %>%
+  filter(!is.na(`Target BvD ID number`),
+         !`Acquiror BvD ID number` %in% Teams$BvD_ID) %>%
+  left_join(Teams, by = c("Target BvD ID number"="BvD_ID")) %>%
+  select(TEAM,
+         BUYER = `Acquiror name`,
+         DEAL_TYPE = `Deal type`,
+         VALUE = `Deal value EUR`,
+         STAKE = `Acquired stake (%)`,
+         DATE = `Last deal status date`) %>%
+  mutate(VALUE = as.numeric(VALUE)/1e6,
+         STAKE = as.numeric(STAKE),
+         YEAR = year(DATE),
+         ID = 1:nrow(.)) %>%
+  filter(!is.na(TEAM),
+         between(YEAR, 2014, 2023),
+         DEAL_TYPE != "Acquisition increased from 100% to 100%")
+
+exchange_rates <- import(here('./data/aux/exchange_rates.xlsx'))
+
+Deals %>%
+  filter(is.na(VALUE)) %>%
+  select(ID, TEAM, BUYER, YEAR)
+
+# Leeds 2023
+# FUENTE: https://www.cityam.com/who-owns-leeds-united-how-much-did-the-49ers-group-pay-andrea-radrizzani-in-2023/
+Deals$PART[Deals$ID == 6] <- 56
+Deals$VALUE[Deals$ID == 6] <- 170*exchange_rates$rate[exchange_rates$YEAR == 2018]
+Deals$BUYER[Deals$ID == 6] <- "49ERS ENTERPRISES PTY LTD"
+
+#Palermo 2016
+#FUENTE: https://www.goal.com/en/news/man-city-owners-set-buy-italian-club-palermo-eur13m-takeover/bltd77f0ea0764de0f7
+Deals$PART[Deals$ID == 16] <- 80
+Deals$VALUE[Deals$ID == 16] <- 13
+
+# Ascoli 2021
+Deals$PART[Deals$ID == 19] <- 10
+Deals$VALUE[Deals$ID == 19] <- 6.2
+Deals$BUYER[Deals$ID == 19] <- "NORTH SIXTH GROUP"
+
+# Ipswich 2021
+Deals$VALUE[Deals$ID == 25]  <- 40
+# 2023	Bright Path Sports Partners	40%	Up to £105 million (IPSWICH)
+
+# Toulouse 2020
+Deals$VALUE[Deals$ID == 32]  <- 20
+
+# Everton, 2016, Moshiri, 49,9%, GBP 200m
+
+# Como, 2019, SENT ENTERTAINMENT
+Deals$VALUE[Deals$ID == 40] <- 0.85
+
+# Elche CF, 2019, SCORE CLUB 2019 SL
+Deals$PART[Deals$ID == 36] <- 70
+Deals$VALUE[Deals$ID == 36] <- 20
+
+Deals$ID[grepl("unknown majority stake %",Deals$DEAL_TYPE, fixed=T)]
+
+Deals$PART[Deals$ID %in% c(13,23)] <- 80
+
+Deals$VALUE[Deals$ID == 7] <- 25
+
+# Error en los datos
+Deals$VALUE[Deals$ID == 70]  <- 5.6
+```
+
+```{r}
+export(Finances, here('./data/processed/Finances.xlsx'),rowNames = F)
+export(Deals, here('./data/processed/M&A.xlsx'),rowNames = F)
+```
+

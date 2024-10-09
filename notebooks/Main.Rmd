@@ -1,0 +1,780 @@
+---
+title: "Unsupervised Machine Learning for Football Club Valuation"
+author: "Carlos Gómez-Torres"
+date: "8 de Septiembre, 2024"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+header-includes:
+    - \usepackage{caption}
+---
+
+\captionsetup[table]{labelformat=empty}
+
+```{r setup, include=FALSE}
+# Configuración global para todos los chunks
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	results = "hold",
+	fig.align = "center"
+)
+```
+
+# Conjunto de datos
+
+```{r library}
+# Carga de ficheros:
+library(rio)
+library(here)
+
+# Data wrangling:
+library(tidyverse)
+
+# SOM:
+library(kohonen)
+
+# ANOVA / post-hoc tests:
+library(agricolae)
+
+# Visualización:
+library(corrplot)
+library(viridis)
+library(kableExtra)
+library(patchwork)
+
+# Funciones de usuario:
+source(here('./scripts/winsorize.R'))
+source(here('./scripts/anova_tests.R'))
+source(here('./scripts/neuron_distance_ratio.R'))
+source(here('./scripts/addFig.R'))
+source(here('./scripts/addTab.R'))
+source(here('./scripts/addAnx.R'))
+
+# Inicialización parámetros de figuras
+nFig <- 0
+nTab <- 0
+nAnx <- 0
+par(mar = c(1,1,10,1))
+```
+
+
+```{r}
+# Carga de datos
+Transfermarkt <- import(here('./data/processed/Transfermarkt.xlsx'))
+Finances <- import(here('./data/processed/Finances.xlsx'))
+
+Deals <- import(here('./data/processed/M&A.xlsx')) %>%
+  filter(!is.na(VALUE), !is.na(STAKE))
+
+df <- inner_join(Finances, Transfermarkt, by = c("TEAM","YEAR")) %>%
+  select(TEAM,
+         COUNTRY,
+         YEAR,
+         TANGIBLE,
+         INTANGIBLE,
+         REVENUE,
+         EBIT,
+         MV,
+         MV5,
+         SIGNED,
+         CAPACITY,
+         ATTENDANCE,
+         OCCUPANCY,
+         RANKNAC,
+         RANKNAC5,
+         WINPCT,
+         WINPCT5) %>%
+  filter(YEAR != 2020)
+  
+```
+
+
+# Principal Component Analysis (PCA)
+
+```{r PCA}
+PCA <- df %>%
+  select(where(is.numeric) & !all_of("YEAR")) %>%
+  mutate(across(everything(), 
+                winsorize, prob = 0.05)) %>%
+  prcomp(., 
+         scale. = T,
+         rank. = 6) 
+
+summary(PCA)[["importance"]] %>%
+  as.data.frame() %>%
+  select(1:6) %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE,
+        caption = nameAnx("Resultado de PCA")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+scores <- as.array(scale(PCA$x))
+
+varimax.rotation <- varimax(PCA$rotation)
+varimax.rotation.matrix <- as.array(varimax.rotation$rotmat)
+varimax.scores <- as.array(scores %*% varimax.rotation.matrix) 
+colnames(varimax.scores) <- c(paste0("RC",1:6))
+
+
+promax.rotation <- promax(PCA$rotation)
+promax.rotation.matrix <- as.array(promax.rotation$rotmat)
+promax.scores <- as.array(scores %*% promax.rotation.matrix) 
+colnames(promax.scores) <- c(paste0("RC",1:6))
+
+scores_corr <- df %>%
+  select(where(is.numeric) & !all_of("YEAR")) %>%
+  cor(scores)
+
+varimax.scores_corr <- df %>%
+  select(where(is.numeric) & !all_of("YEAR")) %>%
+  cor(varimax.scores)
+
+promax.scores_corr <- df %>%
+  select(where(is.numeric) & !all_of("YEAR")) %>%
+  cor(promax.scores)
+
+
+corrplot1 <- wrap_elements(~corrplot(scores_corr,
+                                     tl.col = "black",
+                                     method = 'color'))
+
+corrplot2 <- wrap_elements(~corrplot(varimax.scores_corr,
+                                     tl.col = "black",
+                                     method = 'color',
+                                     tl.pos = "lt"))
+
+corrplot3 <- wrap_elements(~corrplot(promax.scores_corr,
+                                     tl.col = "black",
+                                     method = 'color',
+                                     tl.pos = "lt"))
+
+corrplot1 
+
+corrplot2 + 
+  ggtitle('a) Varimax') +
+  theme(plot.title = element_text(face = "bold")) +
+  corrplot3 + 
+  ggtitle('b) Promax') +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+# Kohonen Self-Organizing Map
+
+```{r SOM}
+trainingMatrix <- as.matrix(varimax.scores)
+
+xdim = 15
+ydim = 15
+set.seed(9546)
+som_grid <- somgrid(xdim = xdim, ydim = ydim, topo="hexagonal")
+som_model <- som(trainingMatrix, 
+                 grid = som_grid, 
+                 rlen = 10000, 
+                 alpha = 0.01, 
+                 keep.data = TRUE)
+
+plot(som_model, type="changes")
+```
+
+```{r}
+for (i in 1:ncol(trainingMatrix)) {
+
+  plot(som_model, 
+       type = "property", 
+       property = getCodes(som_model)[,i], 
+       main = colnames(trainingMatrix)[i],
+       palette.name = viridis_pal(option = "A",
+                                  direction = -1,
+                                  begin = 0.15,
+                                  end = 1))
+}
+```
+
+
+# Hierarchical Clusteting 
+
+```{r hierarchical_clus}
+wss <- (nrow(som_model$codes[[1]])-1)*sum(apply(som_model$codes[[1]],2,var)) 
+for (i in 2:10) {
+  wss[i] <- sum(kmeans(som_model$codes[[1]], centers=i)$withinss)
+}
+
+tree <- hclust(object.distances(som_model , "codes"),
+               method="ward")
+
+plot(tree, main = nameAnx("Dendograma de clusterización jerárquica"))
+rect.hclust(tree , k = 5, border = 2:6)
+
+
+K <- 5
+som_cluster <- cutree(tree, k=K)
+neuron_cluster <- data.frame(neuron = 1:(xdim*ydim),
+                             cluster = as.factor(som_cluster))
+
+df <- df %>%
+  mutate(neuron = som_model$unit.classif) %>%
+  left_join(neuron_cluster)
+
+varimax.scores <- varimax.scores %>%
+  mutate(neuron = som_model$unit.classif,
+         TEAM = df$TEAM,
+         YEAR = df$YEAR) %>%
+  left_join(neuron_cluster)
+
+
+n_per_cluster <- df %>% group_by(cluster) %>% summarise(N = n()) %>% pull(N)
+
+p <- wrap_elements(~plot(som_model,
+     type = "mapping",
+     bgcol = viridis(K)[som_cluster]))
+
+p + data.frame(
+  x = rep(1,5),
+  y = c(1,1.5,2,2.5,3),
+  cluster = factor(paste("N =", n_per_cluster))) %>%
+  ggplot(aes(x = x, y = y, fill = cluster)) +
+  geom_point(size = 10, shape = 21) +  # Puntos grandes y con relleno
+  geom_text(aes(label = cluster), hjust = -0.45) +  # Etiquetas sobre los puntos
+  scale_fill_viridis(discrete = T, guide="none") +  # Paleta discreta de viridis
+  scale_y_continuous(limits = c(1,3)) +
+  theme_void() +
+  plot_layout(ncol = 2, widths = c(2, 1)) +
+  plot_annotation(nameFig("Distribución y segmentación de malla SOM"),
+                caption = "Fuente: Elaboración propia")
+```
+
+# ANOVA
+
+Tras la realización de pruebas de análisis de varianza (ANOVA), se encontraron diferencias significativas entre los clusters para cada uno de los 6 componentes principales para un nivel de significación del 1% (ver Tablas 6-11). Por lo cual, se procedió a realizar pruebas post-hoc (en concreto, TukeyHSD y Scheffe), pero sobre las variables originales relacionadas a cada uno de los componentes principales, con el fin de poder describir con mayor exactitud los clústers.
+
+```{r ANOVAs}
+
+nAnx <- nAnx + 1
+anova_tests(varimax.scores, RC_labels[1])$ANOVA[[1]] %>%
+  as.data.frame() %>%
+  kable(format = "latex",
+        booktabs = TRUE, 
+        caption = "A) Resultados ANOVA sobre ACTINGR") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+anova_tests(varimax.scores, RC_labels[2])$ANOVA[[1]] %>%
+  as.data.frame() %>%
+  kable(format = "latex", 
+        booktabs = TRUE, 
+        caption = "B) Resultados ANOVA sobre WINS") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+anova_tests(varimax.scores, RC_labels[3])$ANOVA[[1]] %>%
+  as.data.frame() %>%
+  kable(format = "latex", 
+        booktabs = TRUE, 
+        caption = "C) Resultados ANOVA sobre EBIT") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+anova_tests(varimax.scores, RC_labels[4])$ANOVA[[1]] %>%
+  as.data.frame() %>%
+  kable(format = "latex", 
+        booktabs = TRUE, 
+        caption = "D) Resultados ANOVA sobre OCCUPANCY") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+anova_tests(varimax.scores, RC_labels[5])$ANOVA[[1]] %>%
+  as.data.frame() %>%
+  kable(format = "latex", 
+        booktabs = TRUE, 
+        caption = "E) Resultados ANOVA sobre CAPAST") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+anova_tests(varimax.scores, RC_labels[6])$ANOVA[[1]] %>%
+  as.data.frame() %>%
+  kable(format = "latex", 
+        booktabs = TRUE, 
+        caption = "F) Resultados ANOVA sobre RANK") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+```{r scheffes}
+test_ing <- anova_tests(df, "REVENUE")$Scheffe 
+test_mv <- anova_tests(df, "MV")$Scheffe
+test_mv5 <- anova_tests(df, "MV5")$Scheffe 
+test_fic <- anova_tests(df, "SIGNED")$Scheffe
+test_mat <- anova_tests(df, "TANGIBLE")$Scheffe
+
+test_win <- anova_tests(df, "WINPCT", pct = T)$Scheffe
+test_win5 <- anova_tests(df, "WINPCT5", pct = T)$Scheffe
+
+test_ebit <- anova_tests(df, "EBIT")$Scheffe
+
+test_ocu <- anova_tests(df, "OCCUPANCY", pct = T)$Scheffe
+
+test_cap <- anova_tests(df, "CAPACITY")$Scheffe
+test_ast <- anova_tests(df, "ATTENDANCE")$Scheffe
+
+test_rnk <- anova_tests(df, "RANKNAC")$Scheffe
+test_rnk5 <- anova_tests(df, "RANKNAC5")$Scheffe
+```
+
+
+## Activos e ingresos (`r RC_labels[1]`)
+
+```{r bloxplots_ACTINGR, fig.width=7, fig.height=3}
+#plot(som_model, 
+#     type = "property", 
+#     property = getCodes(som_model)[,1], 
+#     main = colnames(getCodes(som_model))[1],
+#     palette.name = viridis_pal(option = "A",
+#                                direction = -1,
+#                                begin = 0.15,
+#                                end = 1))
+#add.cluster.boundaries(som_model, som_cluster)
+
+# Prueba sobre ingresos
+nAnx <- nAnx + 1
+test_ing %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "A) Grupos diferenciados por generación de ingresos") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+# Prueba sobre valor de mercado de plantilla
+test_mv %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "B) Grupos diferenciados por valor de mercado de plantilla (actual)") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+# Prueba sobre valor de mercado de plantilla en los últimos 5 años
+test_mv5 %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "C) Grupos diferenciados por valor de mercado de plantilla (últimos 5 años)") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+# Prueba sobre inmovilizado material
+test_mat %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "D) Grupos diferenciados por inmovilizado material") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+# Prueba sobre el gasto en fichajes
+test_fic %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "E) Grupos diferenciados por gasto en fichajes") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=REVENUE, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T,
+                      name = NULL,
+                      labels = paste("Clúster",1:K)) +
+  labs(title = nameFig("Generación de ingresos por clúster"),
+       x = NULL,
+       y = "millones de EUR",
+       caption = "Fuente: Elaboración propia") +
+  theme_bw()
+
+
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=MV, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T, guide="none") +
+  labs(subtitle = "a) Actual",
+       x = NULL,
+       y = "millones de EUR") +
+  theme_bw() +
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=MV5, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T,
+                     name = NULL,
+                     labels = paste("Clúster",1:K)) +
+  labs(subtitle = "b) Últimos 5 años",
+       x = NULL,
+       y = NULL) +
+  theme_bw() +
+  scale_y_continuous(limits = c(0,1500)) +
+  plot_annotation(nameFig("Valor de mercado de plantilla por clúster"),
+                caption = "Fuente: Elaboración propia")
+
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=SIGNED, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T,
+                     name = NULL,
+                     labels = paste("Clúster",1:K)) +
+  labs(title = nameFig("Gasto en fichajes por clúster"),
+       x = NULL,
+       y = "Millones de EUR",
+       caption = "Fuente: Elaboración propia") +
+  theme_bw()
+
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=TANGIBLE, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T,
+                     name = NULL,
+                     labels = paste("Clúster",1:K)) +
+  labs(title = nameFig("Cifra de inmovilizado material por clúster"),
+       x = NULL,
+       y = "Millones de EUR",
+       caption = "Fuente: Elaboración propia") +
+  theme_bw()
+```
+
+## Porcentaje de victorias (`r RC_labels[2]`)
+
+```{r boxplots_WINS, fig.width=7, fig.height=3}
+#plot(som_model, 
+#     type = "property", 
+#     property = getCodes(som_model)[,2], 
+#     main = colnames(getCodes(som_model))[2],
+#     palette.name = viridis_pal(option = "A",
+#                                direction = -1,
+#                                begin = 0.15,
+#                                end = 1))
+#add.cluster.boundaries(som_model, som_cluster)
+nAnx <- nAnx + 1
+test_win %>%
+  as.data.frame() %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "F) Grupos diferenciados por porcentaje de victorias (actual)") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+test_win5 %>%
+  as.data.frame() %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "G) Grupos diferenciados por porcentaje de victorias (últimos 5 años)") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=WINPCT*100, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T, guide="none") +
+  scale_y_continuous(limits = c(0,100)) +
+  labs(subtitle = "a) Actual",
+       x = NULL,
+       y = "Porcentaje (%)") +
+  theme_bw() +
+
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=WINPCT5*100, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T,
+                     name = NULL,
+                     labels = paste("Clúster",1:K)) +
+  scale_y_continuous(limits = c(0,100)) +
+  labs(subtitle = "b) Últimos 5 años",
+       x = NULL,
+       y = NULL) +
+  theme_bw() +
+  plot_annotation(nameFig("Porcentaje de victorias por clúster"),
+                caption = "Fuente: Elaboración propia")
+```
+
+## Rentención de ingresos (`r RC_labels[3]`)
+
+```{r boxplot_EBIT, fig.width=7, fig.height=3}
+#plot(som_model, 
+#     type = "property", 
+#     property = getCodes(som_model)[,3], 
+#     main = colnames(getCodes(som_model))[3],
+#     palette.name = viridis_pal(option = "A",
+#                                direction = -1,
+#                                begin = 0.15,
+#                                end = 1))
+#add.cluster.boundaries(som_model, som_cluster)
+nAnx <- nAnx + 1
+test_ebit %>%
+  as.data.frame() %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "H) Grupos diferenciados por EBIT") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=EBIT, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T,
+                      name = NULL,
+                      labels = paste("Clúster",1:K)) +
+  labs(title = nameFig("Retención de beneficio (EBIT) por clúster"),
+       x = NULL,
+       y = "millones de EUR",
+       caption = "Fuente: Elaboración propia") +
+  theme_bw()
+```
+
+## Ocupación del estadio (`r RC_labels[4]`)
+
+```{r, boxplot_OCUP,  fig.width=7, fig.height=3}
+#plot(som_model, 
+#     type = "property", 
+#     property = getCodes(som_model)[,4], 
+#     main = colnames(getCodes(som_model))[4],
+#     palette.name = viridis_pal(option = "A",
+#                                direction = -1,
+#                                begin = 0.15,
+#                                end = 1))
+#add.cluster.boundaries(som_model, som_cluster)
+nAnx <- nAnx + 1
+test_ocu  %>%
+  as.data.frame() %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "I) Grupos diferenciados por ocupación media del estadio") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=OCCUPANCY*100, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T,
+                      name = NULL,
+                      labels = paste("Clúster",1:K)) +
+  labs(title = nameFig("Porcentaje de ocupación del estadio por clúster"),
+       x = NULL,
+       y = "Porcentaje (%)",
+       caption = "Fuente: Elaboración propia") +
+  theme_bw()
+```
+
+## Masa de espectadores (`r RC_labels[5]`)
+
+```{r boxplot_CAPAST, fig.width=7, fig.height=3}
+plot(som_model, 
+     type = "property", 
+     property = getCodes(som_model)[,5], 
+     main = colnames(getCodes(som_model))[5],
+     palette.name = viridis_pal(option = "A",
+                                direction = -1,
+                                begin = 0.15,
+                                end = 1))
+
+nAnx <- nAnx + 1
+test_cap  %>%
+  as.data.frame() %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "J) Grupos diferenciados por capacidad máxima del estadio") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+test_ast  %>%
+  as.data.frame() %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "K) Grupos diferenciados por asistencia media al estadio") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=CAPACITY, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T, guide="none") +
+  labs(x = NULL,
+       y = "Nº de asientos") +
+  theme_bw() +
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=ATTENDANCE, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T,
+                      name = NULL,
+                      labels = paste("Clúster",1:K)) +
+  scale_y_continuous(limits = c(0,100000)) +
+  labs(x = NULL,
+       y = "Media de asistentes") +
+  theme_bw() +
+plot_annotation(nameFig("Capacidad total y asistencia al estadio por clúster"),
+                caption = "Fuente: Elaboración propia")
+```
+
+## Ranking nacional (`r RC_labels[6]`)
+
+```{r boxplot_RANK, fig.width=7, fig.height=3}
+#plot(som_model, 
+#     type = "property", 
+#     property = getCodes(som_model)[,6], 
+#     main = colnames(getCodes(som_model))[6],
+#     palette.name = viridis_pal(option = "A",
+#                                direction = -1,
+#                                begin = 0.15,
+#                                end = 1))
+#add.cluster.boundaries(som_model, som_cluster)
+
+nAnx <- nAnx + 1
+test_rnk  %>%
+  as.data.frame() %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "L) Grupos diferenciados por ranking nacional (actual)") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+test_rnk5  %>%
+  as.data.frame() %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE, 
+        caption = "M) Grupos diferenciados por ranking nacional (últimos 5 años)") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=RANKNAC, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T, guide="none") +
+  labs(subtitle = "a) Actual",
+       x = NULL,
+       y = "Percentil") +
+  theme_bw() +
+ggplot(df) + 
+  geom_boxplot(aes(x=cluster, 
+                   y=RANKNAC5, 
+                   fill=cluster),
+               color = "black") +
+  scale_fill_viridis(discrete = T,
+                      name = NULL,
+                      labels = paste("Clúster",1:K)) +
+  labs(subtitle = "b) Últimos 5 años",
+       x = NULL,
+       y = NULL) +
+  theme_bw() +
+plot_annotation(nameFig("Ranking nacional por clúster"),
+                caption = "Fuente: Elaboración propia")
+```
+
+# Revenue multiples
+
+```{r multiplos}
+deals_observaciones <- df %>%
+  left_join(Deals, by = c("TEAM","YEAR")) %>%
+  filter(!is.na(ID)) %>%
+  mutate(VALUE_TEAM = VALUE*100/STAKE,
+         RATIO = VALUE_TEAM/REVENUE)
+
+ratios <- deals_observaciones %>%
+  group_by(`Clúster` = cluster) %>%
+  summarise(`Nº transacciones` = n(), 
+            `Part. media` = round(mean(STAKE),2),
+            `Ratio media` = round(mean(RATIO),2),
+            `Ratio mediana` = round(median(RATIO),2))
+
+ratios %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE,
+        caption = nameTab("Nº de transacciones y ratios por clúster")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+
+deals_observaciones %>%
+  mutate(VALUE = round(VALUE,2),
+         STAKE = round(STAKE,2),
+         RATIO = round(RATIO,2),
+         VALUE_TEAM = round(VALUE_TEAM,2)) %>%
+  select(Comprador = COMPRADOR, 
+         Equipo = TEAM, 
+         Año = YEAR, 
+         `Clúster` = cluster,
+         Tipo = TIPO_DEAL,
+         `Participación (%)` = STAKE,
+         `Precio (€m)` = VALUE,
+         Ratio = RATIO,
+         `Valoración (€m)` = VALUE_TEAM) %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE,
+        caption = nameAnx("Tabla de transacciones")) %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
+```
+
+
+```{r, fig.width=7, fig.height=3}
+df %>%
+  inner_join(ratios, by = c("cluster" = "Clúster")) %>%
+  mutate(VALUE_TEAM = round(REVENUE*`Ratio media`,2)) %>%
+  ggplot() +
+  geom_boxplot(aes(y = VALUE_TEAM, fill = cluster)) +
+  scale_fill_viridis(discrete = T, name = NULL, guide = "none") +
+  scale_y_continuous(limits = c(0,3000)) +
+  labs(subtitle = "a) Usando ratio media",
+       x = NULL,
+       y = "Millones de EUR") +
+  theme_bw() +
+df %>%
+  inner_join(ratios, by = c("cluster" = "Clúster")) %>%
+  mutate(VALUE_TEAM = round(REVENUE*`Ratio mediana`,2)) %>%
+  ggplot() +
+  geom_boxplot(aes(y = VALUE_TEAM, fill = cluster)) +
+  scale_fill_viridis(discrete = T, name = NULL) +
+  scale_y_continuous(limits = c(0,3000)) +
+  labs(subtitle = "b) Usando ratio mediana",
+       x = NULL,
+       y = NULL) +
+  theme_bw() +
+plot_annotation(nameFig("Valor estimado por clúster"),
+                caption = "Fuente: Elaboración propia")
+
+
+```
+
+```{r}
+df %>%
+  inner_join(ratios, by = c("cluster" = "Clúster")) %>%
+  rename(RATIO = `Ratio media`) %>%
+  mutate(VALUE_TEAM = round(REVENUE*RATIO,2)) %>%
+  group_by(YEAR) %>%
+  arrange(desc(VALUE_TEAM)) %>%
+  slice_head(n=10) %>%
+  mutate(TOP = row_number()) %>%
+  ungroup() %>%
+  mutate(TEAM = paste0(TEAM," (€",VALUE_TEAM,"m)")) %>%
+  select(TOP, YEAR, TEAM) %>%
+  pivot_wider(names_from = YEAR, values_from = TEAM) %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE,
+        caption = nameAnx("Top 10 equipos por año usando ratio media")) %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
+
+df %>%
+  inner_join(ratios, by = c("cluster" = "Clúster")) %>%
+  rename(RATIO = `Ratio mediana`) %>%
+  mutate(VALUE_TEAM = round(REVENUE*RATIO,2)) %>%
+  group_by(YEAR) %>%
+  arrange(desc(VALUE_TEAM)) %>%
+  slice_head(n=10) %>%
+  mutate(TOP = row_number()) %>%
+  ungroup() %>%
+  mutate(TEAM = paste0(TEAM," (€",VALUE_TEAM,"m)")) %>%
+  select(TOP, YEAR, TEAM) %>%
+  pivot_wider(names_from = YEAR, values_from = TEAM) %>%
+  kable(format = ifelse(knitr::is_latex_output(), "latex", "html"), 
+        booktabs = TRUE,
+        caption = nameAnx("Top 10 equipos por año usando ratio mediana")) %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
+```
+

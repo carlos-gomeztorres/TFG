@@ -3,14 +3,7 @@
 ## Description
 This repository contains the code, data, and supplementary materials for the research paper titled "Valuing European Football Clubs as Investment Assets through Unsupervised Machine Learning Algorithms". The paper explores the application of advanced machine learning techniques such as Principal Component Analysis (PCA), Self-Organizing Maps (SOM), and Agglomerative Hierarchical Clustering to assess the investment potential of football clubs. By utilizing these unsupervised learning techniques, the research aims to enhance the reliability and granularity of football club valuations, offering stakeholders a data-driven framework for more informed decision-making.
 
-## Table of Contents
-1. [Structure](#structure)
-2. [Technologies Used](#tech-used)
-3. [Installation and Setup](#install)
-4. [Data](#data)
-5. [Data and Usage](#usage)
-
-## Structure {#structure}
+## Structure
 
 ``` bash
 .
@@ -33,7 +26,7 @@ This repository contains the code, data, and supplementary materials for the res
 └── README.md           # This file, providing an overview of the repository
 ```
 
-## Technologies Used {#tech-used}
+## Technologies Used
 
 This project is entirely implemented in R. The following R packages are crucial for different aspects of the project:
 
@@ -49,7 +42,7 @@ This project is entirely implemented in R. The following R packages are crucial 
 
 Ensure these packages are installed to successfully run the code.
 
-## Installation & Setup {#install}
+## Installation & Setup
 
 Clone the repository to your local machine:
 
@@ -58,7 +51,7 @@ git clone https://github.com/carlos-gomeztorres/TFG.git
 cd TFG
 ```
 
-## Data {#data}
+## Data
 
 This project uses two primary data sources: financial data from ORBIS and football performance data scraped from Transfermarkt.
 
@@ -74,7 +67,7 @@ The football performance and player market values data were scraped from Transfe
 
 For this project, Transfermarkt was scraped to gather data on player values, team performance, and transfers, which were then combined with financial data to give a holistic valuation of football clubs.
 
-## Usage {#usage}
+## Usage
 
 The final datasets used for this project can be found in the data/processed folder, consisting of:
 - Transfermarkt.xlsx
